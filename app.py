@@ -281,7 +281,7 @@ def build_master_prompt(
     return f"""
 You are an ELITE viral content strategist, retention expert, storyboard architect, content planner, video scriptwriter, and conversion-focused CTA writer for Koocester.
 
-Your job is to generate the BEST possible viral video ideas targeted for qualified leads, with complete storyboarding automation, full video structure, deeper reasoning, better content logic, platform-accurate virality expectations, and high-converting caption + CTA suggestions.
+Your job is to generate the BEST possible viral video ideas targeted for qualified leads, with complete storyboarding automation, full video structure, deeper reasoning, better content logic, platform-accurate virality expectations, and high-converting caption suggestions.
 
 You must think like:
 - viral strategist
@@ -415,25 +415,12 @@ Every best-performing output MUST include:
 2. PATTERN INTERRUPT
 3. OPEN LOOP
 4. PAYOFF
-5. CTA
-6. CONTENT EXPECTATION
+5. CONTENT EXPECTATION
 
 Content expectation means:
 - explain what the viewer expects to receive from the video
 - explain whether the idea is strong enough to satisfy that expectation
 - explain where retention may drop if execution is weak
-
-==================================================
-HIGH-CONVERTING CTA ENGINE
-==================================================
-
-CTA must:
-- match the goal exactly
-- feel natural, not overly salesy
-- create urgency, curiosity, or direct action
-- be short and punchy
-- be practical for the selected page and platform
-- work for Malaysian audience behavior
 
 ==================================================
 UPLOADED FILE CONTEXT
@@ -537,10 +524,9 @@ Give:
 - Caption Option 3
 - Which caption is strongest and why
 
-9. CTA OPTIONS
-- CTA Option 1
-- CTA Option 2
-- CTA Option 3
+9. CTA
+- Do not generate CTA options here
+- CTA will be handled by the system separately
 
 ==================================================
 FINAL INSTRUCTIONS
@@ -1184,6 +1170,73 @@ def render_admin_analytics() -> None:
 
 
 # --------------------------------------------------
+# CTA ENGINE V10
+# --------------------------------------------------
+def generate_cta_v10(
+    goal: str,
+    platform: str,
+    category: str,
+    audience: str,
+    pain_point: str,
+    offer: str,
+) -> Tuple[List[str], str, str]:
+    category_keyword = {
+        "Homes": "HOME",
+        "Business": "NETWORK",
+        "Autos": "AUTO",
+        "Foodie": "FOOD",
+    }.get(category, "START")
+
+    audience_part = audience.strip() if audience.strip() else "the right people"
+    pain_part = pain_point.strip() if pain_point.strip() else "this"
+
+    if goal == "Leads":
+        ctas = [
+            f"DM '{category_keyword}' if you're serious about {pain_part.lower()}.",
+            f"Not for everyone — DM '{category_keyword}' if you're one of the few who actually want results.",
+            f"If this sounds like you, DM '{category_keyword}' and we’ll guide you to the next step.",
+        ]
+    elif goal == "Engagement":
+        ctas = [
+            f"Be honest — would {audience_part.lower()} actually agree with this?",
+            "Comment your take below.",
+            "Most people will not agree with this. Do you?",
+        ]
+    elif goal == "Views":
+        ctas = [
+            "Watch this again — you probably missed the real point.",
+            "Most people don’t catch this the first time.",
+            "Wait till the end before you judge this.",
+        ]
+    elif goal == "Awareness":
+        ctas = [
+            "Follow for more content like this.",
+            "If this helped, there’s more coming.",
+            "Stay close — more soon.",
+        ]
+    else:
+        ctas = [
+            f"DM '{category_keyword}' to learn more.",
+            "Save this for later.",
+            "Follow for more.",
+        ]
+
+    if offer.strip():
+        ctas[0] = f"{ctas[0]} {offer.strip()}."
+
+    if platform == "TikTok":
+        ctas = [cta.rstrip(".") + " 👇" for cta in ctas]
+
+    best_cta = ctas[0]
+    reasoning = (
+        "This CTA is strongest because it is direct, action-led, tied to audience intent, "
+        "and uses a clear keyword trigger that works well for comments, DMs, and automation."
+    )
+
+    return ctas, best_cta, reasoning
+
+
+# --------------------------------------------------
 # UI
 # --------------------------------------------------
 st.title("🚀 Koocester Viral Content Engine")
@@ -1462,6 +1515,27 @@ if generate:
             st.subheader("Generated Strategy")
             st.markdown(output)
 
+            cta_options, best_cta, reasoning = generate_cta_v10(
+                goal=goal,
+                platform=platform,
+                category=category,
+                audience=audience,
+                pain_point=pain_point,
+                offer=offer,
+            )
+
+            st.divider()
+            st.subheader("🚀 CTA Engine V10")
+            st.markdown("### CTA Options")
+            for i, cta in enumerate(cta_options, 1):
+                st.write(f"{i}. {cta}")
+
+            st.markdown("### ⭐ Best CTA")
+            st.success(best_cta)
+
+            st.markdown("### 🧠 Why This Works")
+            st.write(reasoning)
+
         except Exception as e:
             insert_usage_log(
                 {
@@ -1535,8 +1609,6 @@ if generate:
                 st.subheader("Full Storyboard")
                 for idx, scene in enumerate(data["storyboard"], start=1):
                     st.write(f"**Scene {idx}:** {scene}")
-                st.write(f"**CTA (ON-SCREEN TEXT):** {data['cta']['on_screen']}")
-                st.write(f"**CTA (CAPTION CTA):** {data['cta']['caption_cta']}")
 
             with tabs[4]:
                 st.subheader("Video Script With Dialogue")
@@ -1549,12 +1621,19 @@ if generate:
                     st.write(f"- {line}")
 
             with tabs[6]:
-                st.subheader("🎯 Call To Action")
-                st.write(f"**On-Screen CTA:** {data['cta']['on_screen']}")
-                st.write(f"**Caption CTA:** {data['cta']['caption_cta']}")
-                st.write("**CTA Options:**")
-                for option in data["cta"]["options"]:
-                    st.write(f"- {option}")
+                st.subheader("🚀 CTA Engine V10")
+                sample_ctas, sample_best_cta, sample_reasoning = generate_cta_v10(
+                    goal=goal,
+                    platform=platform,
+                    category=category,
+                    audience=audience,
+                    pain_point=pain_point,
+                    offer=offer,
+                )
+                for i, cta in enumerate(sample_ctas, 1):
+                    st.write(f"{i}. {cta}")
+                st.success(sample_best_cta)
+                st.write(sample_reasoning)
 
             with tabs[7]:
                 st.subheader("Caption Suggestions")
