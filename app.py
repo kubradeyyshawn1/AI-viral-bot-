@@ -11,8 +11,8 @@ from openai import OpenAI
 
 
 st.set_page_config(
-    page_title="Koocester SG Viral Intelligence Engine",
-    page_icon="🚀",
+    page_title="Koocester Producer Intelligence Engine",
+    page_icon="K",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -22,6 +22,12 @@ DATA_DIR = APP_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "analytics.db"
 DEFAULT_MODEL = "gpt-5.4"
+
+# Hide backend/debug sections from normal producers.
+SHOW_ADVANCED_FIELDS = False
+SHOW_DEBUG_PROMPTS = False
+SHOW_PUBLIC_INTELLIGENCE = False
+SHOW_PAGE_INTELLIGENCE_PREVIEW = False
 
 
 # --------------------------------------------------
@@ -144,7 +150,7 @@ def render_admin_login() -> None:
         st.session_state.admin_authenticated = False
 
     with st.sidebar:
-        st.header("🔒 Admin Access")
+        st.header("Admin Access")
         password = st.text_input("Enter admin password", type="password")
 
         if password:
@@ -158,14 +164,13 @@ def render_admin_login() -> None:
         st.header("Engine Priorities")
         st.markdown(
             """
-- Singapore-first relevance
-- page-aware outputs
+- Country-specific relevance
+- Instagram-page-aware outputs
 - same brand path, stronger execution
 - viral now + rising next
-- competitor intelligence
-- producer mode
-- copywriter mode
-- storyboard + script depth
+- producer/copywriter outputs
+- hidden backend intelligence
+- cleaner producer interface
 - better leads + better retention
 """
         )
@@ -224,51 +229,39 @@ def summarize_uploaded_files(uploaded_files) -> Tuple[str, str, int, int]:
 
 
 # --------------------------------------------------
-# PAGE INTELLIGENCE
+# PAGE INTELLIGENCE + CONFIRMED INSTAGRAM LINKS
 # --------------------------------------------------
 PAGE_INTELLIGENCE = {
     "Koocester Main": {
         "internal_key": "main",
+        "market": "Singapore",
+        "instagram_url": "https://www.instagram.com/koocester/",
         "audience": "Singapore lifestyle audience, aspirational viewers, young professionals, founders, social audience, premium discovery audience",
         "lead_type": "Brand engagement leads, ecosystem leads, premium awareness audience",
+        "cta_intent": "discover Koocester, engage with the ecosystem, follow the brand, attend or explore premium experiences",
+        "cta_keyword": "KOOCESTER",
         "tone": "Premium",
         "default_goal": "Awareness",
         "recommended_mode": "Brand-Led Viral Discovery",
         "recommended_length": "90 sec",
         "allowed_lengths": ["30 sec", "45 sec", "60 sec", "90 sec", "120 sec", "180 sec"],
         "niche_memory": "Premium Singapore lifestyle content, founder ecosystem exposure, discovery-led social content, brand-driven high-perception videos",
-        "page_direction": "Broad Koocester brand content that should still feel premium, sharp, culturally relevant to Singapore, and social-first.",
-        "winning_formats": [
-            "strong opinion hook",
-            "event atmosphere with meaning",
-            "social proof montage",
-            "premium micro-story",
-            "aspirational lifestyle cut",
-            "curiosity-led discovery reel",
-        ],
-        "viral_now": [
-            "fast subtitle reels with premium cuts",
-            "short social-proof clips with strong first sentence",
-            "micro-story reels that reveal payoff early",
-            "clean event reels with tension instead of generic recaps",
-        ],
-        "rising_next": [
-            "identity-based lifestyle hooks",
-            "short documentary-style brand snippets",
-            "community-status storytelling",
-            "high-contrast before-vs-after perception edits",
-        ],
-        "competitor_patterns": [
-            "premium event recap with stronger tension in first 2 seconds",
-            "bold statement before visuals fully establish context",
-            "fast pacing with cleaner caption styling",
-            "emotion + credibility combined quickly",
-        ],
+        "page_direction": "Broad Koocester brand content that should feel premium, sharp, culturally relevant to Singapore, and social-first.",
+        "producer_question": "What moment, person, event, or experience has enough social/status pull to make people stop scrolling?",
+        "success_definition": "Success means the content makes Koocester feel culturally relevant, premium, and worth following or engaging with.",
+        "winning_formats": ["strong opinion hook", "event atmosphere with meaning", "social proof montage", "premium micro-story", "aspirational lifestyle cut", "curiosity-led discovery reel"],
+        "viral_now": ["fast subtitle reels with premium cuts", "short social-proof clips with strong first sentence", "micro-story reels that reveal payoff early", "clean event reels with tension instead of generic recaps"],
+        "rising_next": ["identity-based lifestyle hooks", "short documentary-style brand snippets", "community-status storytelling", "high-contrast before-vs-after perception edits"],
+        "competitor_patterns": ["premium event recap with stronger tension in first 2 seconds", "bold statement before visuals fully establish context", "fast pacing with cleaner caption styling", "emotion + credibility combined quickly"],
     },
     "Koocester Business Singapore": {
         "internal_key": "business",
+        "market": "Singapore",
+        "instagram_url": "https://www.instagram.com/koocesterbusiness",
         "audience": "Singapore founders, business owners, operators, startup audience, networking audience, ambitious professionals",
         "lead_type": "Founder/event leads, networking leads, brand authority leads, business ecosystem leads",
+        "cta_intent": "join better business rooms, connect with founders, attend business events, build authority and opportunities",
+        "cta_keyword": "NETWORK",
         "tone": "Bold",
         "default_goal": "Leads",
         "recommended_mode": "Authority + Retention",
@@ -276,37 +269,21 @@ PAGE_INTELLIGENCE = {
         "allowed_lengths": ["30 sec", "45 sec", "60 sec", "90 sec", "120 sec", "180 sec", "240 sec"],
         "niche_memory": "Founder networking, business insight, business psychology, startup/operator talk, high-value rooms, social proof for serious founders",
         "page_direction": "Business content should feel intelligent, sharp, premium, opinionated when needed, and useful enough for founders to save or send.",
-        "winning_formats": [
-            "contrarian founder hook",
-            "what founders get wrong",
-            "high-value room vs low-value room comparison",
-            "short founder lesson clip",
-            "networking ROI explanation",
-            "business myth breakdown",
-        ],
-        "viral_now": [
-            "hard-truth founder hooks",
-            "anti-fluff networking breakdowns",
-            "short clips exposing useless founder behavior",
-            "high-status room analysis with strong subtitles",
-        ],
-        "rising_next": [
-            "operator confession format",
-            "business lesson from one real moment",
-            "event room psychology content",
-            "comment-bait controversial founder opinions",
-        ],
-        "competitor_patterns": [
-            "most strong business reels start with tension immediately",
-            "reels that compare bad vs good founder behavior perform better than generic motivation",
-            "captions often stay short, sharp, and high-conviction",
-            "strongest videos create disagreement early to drive comments",
-        ],
+        "producer_question": "Why would this founder, company, room, or interview be worth watching instead of a generic business video?",
+        "success_definition": "Success means founders or business owners feel this content gives useful insight, social proof, or access to better rooms.",
+        "winning_formats": ["contrarian founder hook", "what founders get wrong", "high-value room vs low-value room comparison", "short founder lesson clip", "networking ROI explanation", "business myth breakdown"],
+        "viral_now": ["hard-truth founder hooks", "anti-fluff networking breakdowns", "short clips exposing useless founder behavior", "high-status room analysis with strong subtitles"],
+        "rising_next": ["operator confession format", "business lesson from one real moment", "event room psychology content", "comment-bait controversial founder opinions"],
+        "competitor_patterns": ["most strong business reels start with tension immediately", "reels that compare bad vs good founder behavior perform better than generic motivation", "captions often stay short, sharp, and high-conviction", "strongest videos create disagreement early to drive comments"],
     },
     "Koocester Autos Singapore": {
         "internal_key": "autos",
+        "market": "Singapore",
+        "instagram_url": "https://www.instagram.com/koocesterautos",
         "audience": "Singapore car buyers, luxury car audience, aspirational viewers, enthusiasts, first-time premium buyers",
         "lead_type": "Premium buyer leads, showroom traffic leads, aspiration-driven leads",
+        "cta_intent": "book a viewing, enquire about the car, imagine ownership, move closer to a premium car decision",
+        "cta_keyword": "AUTO",
         "tone": "Premium",
         "default_goal": "Leads",
         "recommended_mode": "Extended Visual Storytelling",
@@ -314,37 +291,21 @@ PAGE_INTELLIGENCE = {
         "allowed_lengths": ["30 sec", "45 sec", "60 sec", "90 sec", "120 sec", "180 sec"],
         "niche_memory": "Luxury ownership emotion, aspiration, premium car buyer psychology, driving POV, design/status storytelling, comparison-led buyer logic",
         "page_direction": "Autos content should feel premium, cinematic, emotionally persuasive, and still grounded enough to move buyers closer to action.",
-        "winning_formats": [
-            "premium buyer mistake",
-            "ownership feeling POV",
-            "badge vs real ownership reality",
-            "luxury reveal with emotional narration",
-            "comparison reel",
-            "aspirational day-in-life cut",
-        ],
-        "viral_now": [
-            "POV ownership experience reels",
-            "emotion-first luxury hooks",
-            "short comparison reels with clear conclusion",
-            "premium detail shots with a sharper first line",
-        ],
-        "rising_next": [
-            "one hidden truth before buying premium",
-            "buyer regret prevention reels",
-            "status vs practicality comparison",
-            "driving moment + narration hybrids",
-        ],
-        "competitor_patterns": [
-            "top auto content makes viewers imagine ownership, not just view the car",
-            "best hooks create a buyer decision tension quickly",
-            "clean cinematic visuals still need a strong voiceover line to perform",
-            "showcase-only videos are weaker than decision-led stories",
-        ],
+        "producer_question": "Why would this exact car, owner, spec, or driving moment make viewers imagine themselves owning it?",
+        "success_definition": "Success means viewers feel desire, status, or buyer curiosity strong enough to save, enquire, or book a viewing.",
+        "winning_formats": ["premium buyer mistake", "ownership feeling POV", "badge vs real ownership reality", "luxury reveal with emotional narration", "comparison reel", "aspirational day-in-life cut"],
+        "viral_now": ["POV ownership experience reels", "emotion-first luxury hooks", "short comparison reels with clear conclusion", "premium detail shots with a sharper first line"],
+        "rising_next": ["one hidden truth before buying premium", "buyer regret prevention reels", "status vs practicality comparison", "driving moment + narration hybrids"],
+        "competitor_patterns": ["top auto content makes viewers imagine ownership, not just view the car", "best hooks create a buyer decision tension quickly", "clean cinematic visuals still need a strong voiceover line to perform", "showcase-only videos are weaker than decision-led stories"],
     },
     "Koocester Homes Singapore": {
         "internal_key": "homes",
+        "market": "Singapore",
+        "instagram_url": "https://www.instagram.com/koocesterhomes",
         "audience": "Singapore homeowners, condo buyers, landed property audience, renovation planners, premium home audience",
         "lead_type": "Renovation leads, home consultation leads, property lifestyle audience",
+        "cta_intent": "start a home upgrade, plan renovation, save renovation ideas, book a consultation or showroom visit",
+        "cta_keyword": "HOME",
         "tone": "Premium",
         "default_goal": "Leads",
         "recommended_mode": "Long Visual Storytelling",
@@ -352,37 +313,109 @@ PAGE_INTELLIGENCE = {
         "allowed_lengths": ["45 sec", "60 sec", "90 sec", "120 sec", "180 sec", "240 sec"],
         "niche_memory": "Renovation storytelling, homeowner mistakes, layout logic, home transformation, budget tension, property lifestyle",
         "page_direction": "Homes content should feel premium, useful, emotionally grounded, and specific enough to trigger saves and consultation intent.",
-        "winning_formats": [
-            "renovation mistake",
-            "before vs after transformation",
-            "hidden cost reveal",
-            "layout problem solved",
-            "homeowner regret story",
-            "walkthrough with practical logic",
-        ],
-        "viral_now": [
-            "renovation regrets",
-            "homeowner tension hooks",
-            "smart layout reveal reels",
-            "emotional transformation walkthroughs",
-        ],
-        "rising_next": [
-            "budget mistake breakdown",
-            "small-space transformation storytelling",
-            "what nobody tells you before renovating in Singapore",
-            "visual walkthrough + practical narration hybrids",
-        ],
-        "competitor_patterns": [
-            "best renovation reels reveal the payoff quickly",
-            "visual beauty alone is weaker than decision-led tension",
-            "specific homeowner pain beats generic home tour content",
-            "strong save-worthy content frames a mistake, regret, or solution",
-        ],
+        "producer_question": "Why would this exact home, homeowner, layout, transformation, or house tour be worth filming and worth saving?",
+        "success_definition": "Success means homeowners feel inspired and informed enough to save, share, or enquire about their own renovation journey.",
+        "winning_formats": ["renovation mistake", "before vs after transformation", "hidden cost reveal", "layout problem solved", "homeowner regret story", "walkthrough with practical logic"],
+        "viral_now": ["renovation regrets", "homeowner tension hooks", "smart layout reveal reels", "emotional transformation walkthroughs"],
+        "rising_next": ["budget mistake breakdown", "small-space transformation storytelling", "what nobody tells you before renovating in Singapore", "visual walkthrough + practical narration hybrids"],
+        "competitor_patterns": ["best renovation reels reveal the payoff quickly", "visual beauty alone is weaker than decision-led tension", "specific homeowner pain beats generic home tour content", "strong save-worthy content frames a mistake, regret, or solution"],
+    },
+    "Koocester Business Malaysia": {
+        "internal_key": "business_my",
+        "market": "Malaysia",
+        "instagram_url": "https://www.instagram.com/koocesterbusiness.my",
+        "audience": "Malaysia founders, SME owners, startup operators, entrepreneurs, business event audience, ambitious professionals",
+        "lead_type": "Founder/event leads, SME networking leads, business authority leads, Malaysian business ecosystem leads",
+        "cta_intent": "join better business rooms, connect with founders, attend business events, build authority and opportunities in Malaysia",
+        "cta_keyword": "NETWORK",
+        "tone": "Bold",
+        "default_goal": "Leads",
+        "recommended_mode": "Authority + Retention",
+        "recommended_length": "90 sec",
+        "allowed_lengths": ["30 sec", "45 sec", "60 sec", "90 sec", "120 sec", "180 sec", "240 sec"],
+        "niche_memory": "Malaysia founder networking, SME growth, business insight, operator talk, high-value rooms, founder interviews, social proof for serious business owners",
+        "page_direction": "Business Malaysia content should feel sharp, founder-led, practical, opportunity-driven, and relevant to Malaysian entrepreneurs and business owners.",
+        "producer_question": "Why would this Malaysian founder, company, room, or interview be worth watching instead of a generic business video?",
+        "success_definition": "Success means Malaysian founders or business owners feel this content gives useful insight, social proof, or access to better business rooms.",
+        "winning_formats": ["contrarian founder hook", "SME growth lesson", "high-value room vs low-value room comparison", "short founder interview clip", "networking ROI explanation", "business myth breakdown"],
+        "viral_now": ["hard-truth founder hooks", "SME owner lessons", "anti-fluff networking breakdowns", "short clips exposing business mistakes", "high-status room analysis with strong subtitles"],
+        "rising_next": ["operator confession format", "business lesson from one real Malaysian founder moment", "event room psychology content", "comment-bait founder opinions", "Malaysia business growth frameworks"],
+        "competitor_patterns": ["strong business reels start with tension immediately", "reels that compare bad vs good founder behavior perform better than generic motivation", "captions often stay short and high-conviction", "strongest videos create disagreement or recognition early"],
+    },
+    "Koocester Autos Malaysia": {
+        "internal_key": "autos_my",
+        "market": "Malaysia",
+        "instagram_url": "https://www.instagram.com/koocesterautos.my",
+        "audience": "Malaysia car buyers, premium and luxury car audience, aspirational viewers, enthusiasts, first-time premium buyers",
+        "lead_type": "Premium buyer leads, showroom traffic leads, aspiration-driven Malaysian auto leads",
+        "cta_intent": "book a viewing, enquire about the car, imagine ownership, move closer to a premium car decision in Malaysia",
+        "cta_keyword": "AUTO",
+        "tone": "Premium",
+        "default_goal": "Leads",
+        "recommended_mode": "Extended Visual Storytelling",
+        "recommended_length": "90 sec",
+        "allowed_lengths": ["30 sec", "45 sec", "60 sec", "90 sec", "120 sec", "180 sec"],
+        "niche_memory": "Malaysia premium car lifestyle, luxury ownership emotion, aspiration, buyer psychology, driving POV, design/status storytelling, comparison-led buyer logic",
+        "page_direction": "Autos Malaysia content should feel premium, cinematic, emotionally persuasive, and grounded in Malaysian car buyer lifestyle and status psychology.",
+        "producer_question": "Why would this exact car, owner, spec, or driving moment make Malaysian viewers imagine themselves owning it?",
+        "success_definition": "Success means viewers feel desire, status, or buyer curiosity strong enough to save, enquire, or book a viewing.",
+        "winning_formats": ["premium buyer mistake", "ownership feeling POV", "badge vs real ownership reality", "luxury reveal with emotional narration", "comparison reel", "aspirational day-in-life cut"],
+        "viral_now": ["POV ownership experience reels", "emotion-first luxury hooks", "short comparison reels with clear conclusion", "premium detail shots with a sharper first line"],
+        "rising_next": ["one hidden truth before buying premium", "buyer regret prevention reels", "status vs practicality comparison", "driving moment + narration hybrids", "Malaysia road/lifestyle ownership angles"],
+        "competitor_patterns": ["top auto content makes viewers imagine ownership, not just view the car", "best hooks create a buyer decision tension quickly", "clean cinematic visuals still need a strong voiceover line to perform", "showcase-only videos are weaker than decision-led stories"],
+    },
+    "Koocester Homes Malaysia": {
+        "internal_key": "homes_my",
+        "market": "Malaysia",
+        "instagram_url": "https://www.instagram.com/koocesterhomes.my",
+        "audience": "Malaysia homeowners, condo buyers, landed property audience, renovation planners, premium home audience",
+        "lead_type": "Renovation leads, home consultation leads, property lifestyle audience, Malaysian homeowner leads",
+        "cta_intent": "start a home upgrade, plan renovation, save renovation ideas, book a consultation or showroom visit in Malaysia",
+        "cta_keyword": "HOME",
+        "tone": "Premium",
+        "default_goal": "Leads",
+        "recommended_mode": "Long Visual Storytelling",
+        "recommended_length": "120 sec",
+        "allowed_lengths": ["45 sec", "60 sec", "90 sec", "120 sec", "180 sec", "240 sec"],
+        "niche_memory": "Malaysia renovation storytelling, homeowner mistakes, layout logic, home transformation, budget tension, condo and landed property lifestyle",
+        "page_direction": "Homes Malaysia content should feel premium, practical, emotionally grounded, and specific enough to make Malaysian homeowners save, share, or enquire.",
+        "producer_question": "Why would this exact Malaysian home, homeowner, layout, transformation, or house tour be worth filming and worth saving?",
+        "success_definition": "Success means homeowners feel inspired and informed enough to save, share, or enquire about their own renovation journey.",
+        "winning_formats": ["renovation mistake", "before vs after transformation", "hidden cost reveal", "layout problem solved", "homeowner regret story", "walkthrough with practical logic"],
+        "viral_now": ["renovation regrets", "homeowner tension hooks", "smart layout reveal reels", "emotional transformation walkthroughs"],
+        "rising_next": ["budget mistake breakdown", "small-space transformation storytelling", "what nobody tells you before renovating in Malaysia", "visual walkthrough + practical narration hybrids", "landed vs condo renovation angles"],
+        "competitor_patterns": ["best renovation reels reveal the payoff quickly", "visual beauty alone is weaker than decision-led tension", "specific homeowner pain beats generic home tour content", "strong save-worthy content frames a mistake, regret, or solution"],
+    },
+    "Koocester Wealth Singapore": {
+        "internal_key": "wealth",
+        "market": "Singapore",
+        "instagram_url": "",
+        "audience": "Singapore professionals, aspiring investors, business owners, wealth builders, high-income aspirational audience",
+        "lead_type": "Wealth-building leads, investor education leads, financial planning interest leads",
+        "cta_intent": "build wealth, learn better money decisions, start investing, understand financial growth, improve long-term security",
+        "cta_keyword": "WEALTH",
+        "tone": "Educational",
+        "default_goal": "Leads",
+        "recommended_mode": "Trust + Authority Wealth Education",
+        "recommended_length": "90 sec",
+        "allowed_lengths": ["30 sec", "45 sec", "60 sec", "90 sec", "120 sec", "180 sec"],
+        "niche_memory": "wealth building, investing psychology, financial planning, money mistakes, long-term security, status and freedom through better money decisions",
+        "page_direction": "Wealth content should feel trustworthy, sharp, educational, status-aware, and focused on helping Singapore audiences build wealth properly.",
+        "producer_question": "Why would this money story, expert, investor, or financial insight make someone rethink how they build wealth?",
+        "success_definition": "Success means viewers feel more serious about building wealth and take an action such as enquiring, saving, or requesting guidance.",
+        "winning_formats": ["wealth mistake", "what rich people understand", "money myth breakdown", "investor psychology", "financial planning truth", "status vs security decision"],
+        "viral_now": ["money mistake hooks", "wealth-building identity content", "simple investment psychology breakdowns", "what Singaporeans get wrong about wealth"],
+        "rising_next": ["financial freedom micro-stories", "wealth gap explanation reels", "expert reaction to common money beliefs", "young professional money decision frameworks"],
+        "competitor_patterns": ["strong wealth content opens with a money belief tension", "simple frameworks outperform vague financial motivation", "trust and credibility matter more than hype", "viewer must feel this applies to their future self"],
     },
     "Koocester Foodie Singapore": {
         "internal_key": "foodie",
+        "market": "Singapore",
+        "instagram_url": "",
         "audience": "Singapore food lovers, cafe hoppers, discovery audience, social diners, value-conscious food audience",
         "lead_type": "Discovery engagement audience, food discovery leads, location traffic audience",
+        "cta_intent": "discover food spots, save the place, tag friends, visit the location, follow for food recommendations",
+        "cta_keyword": "FOOD",
         "tone": "Emotional",
         "default_goal": "Engagement",
         "recommended_mode": "Fast Visual Storytelling",
@@ -390,32 +423,12 @@ PAGE_INTELLIGENCE = {
         "allowed_lengths": ["15 sec", "30 sec", "45 sec", "60 sec", "90 sec", "120 sec"],
         "niche_memory": "Food discovery, hidden gems, satisfying visual content, first-bite reactions, value framing, social dining lifestyle",
         "page_direction": "Foodie content should feel highly watchable, satisfying, saveable, and relevant to Singapore dining culture.",
-        "winning_formats": [
-            "worth it or not",
-            "price-to-value reveal",
-            "first bite reaction",
-            "hidden gem discovery",
-            "cheap vs expensive",
-            "queue-worthy verdict",
-        ],
-        "viral_now": [
-            "price-based food hooks",
-            "first bite payoff clips",
-            "hidden gem reels with quick verdict",
-            "satisfying close-up edit sequences",
-        ],
-        "rising_next": [
-            "honest hype-check food reels",
-            "three-second visual payoff openings",
-            "dish-by-dish verdict carousels turned into reels",
-            "taste tension with quick emotional commentary",
-        ],
-        "competitor_patterns": [
-            "best foodie reels answer is-it-worth-it quickly",
-            "food texture shots must arrive early",
-            "money angle performs strongly in Singapore",
-            "caption and on-screen text should stay simple and verdict-driven",
-        ],
+        "producer_question": "Why would this specific food place, dish, price, reaction, or discovery be worth saving and sharing?",
+        "success_definition": "Success means viewers want to save the spot, tag someone, visit, or follow for more Singapore food discoveries.",
+        "winning_formats": ["worth it or not", "price-to-value reveal", "first bite reaction", "hidden gem discovery", "cheap vs expensive", "queue-worthy verdict"],
+        "viral_now": ["price-based food hooks", "first bite payoff clips", "hidden gem reels with quick verdict", "satisfying close-up edit sequences"],
+        "rising_next": ["honest hype-check food reels", "three-second visual payoff openings", "dish-by-dish verdict carousels turned into reels", "taste tension with quick emotional commentary"],
+        "competitor_patterns": ["best foodie reels answer is-it-worth-it quickly", "food texture shots must arrive early", "money angle performs strongly in Singapore", "caption and on-screen text should stay simple and verdict-driven"],
     },
 }
 
@@ -427,15 +440,12 @@ def get_page_intelligence(page_name: str) -> Dict[str, Any]:
 # --------------------------------------------------
 # VIRAL INTELLIGENCE / TREND LAYER (NO ACCOUNT ACCESS)
 # --------------------------------------------------
-def build_public_intelligence_summary(page_data: Dict[str, Any], platform: str) -> str:
-    platform_now = []
-    platform_next = []
-
+def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any], platform: str, reference_links: str) -> str:
     if platform == "Instagram":
         platform_now = [
-            "cleaner premium edit structures",
-            "strong opening statement in first 1-2 seconds",
-            "save-worthy educational framing",
+            "clean premium edits with immediate context",
+            "strong first-line hooks within 1-2 seconds",
+            "save-worthy or share-worthy educational framing",
             "high-contrast captions with fast readability",
         ]
         platform_next = [
@@ -447,7 +457,7 @@ def build_public_intelligence_summary(page_data: Dict[str, Any], platform: str) 
     else:
         platform_now = [
             "harder hooks in first second",
-            "rawer tension-driven opening lines",
+            "raw tension-driven opening lines",
             "comment-bait opinions",
             "pattern interrupts every few seconds",
         ]
@@ -458,18 +468,34 @@ def build_public_intelligence_summary(page_data: Dict[str, Any], platform: str) 
             "high-rewatch payoff structures",
         ]
 
+    ig_url = page_data.get("instagram_url") or "No confirmed Instagram link provided yet."
+    links = reference_links.strip() if reference_links.strip() else "No extra links provided by producer."
+
     lines = [
-        f"Market focus: Singapore only.",
+        "Market focus: {page_data.get('market', 'Singapore')} only.",
+        f"Selected Instagram page identity: {page_name} — {ig_url}",
         f"Page direction memory: {page_data['page_direction']}",
         f"Known page niche: {page_data['niche_memory']}",
         f"Known audience: {page_data['audience']}",
+        f"Producer evaluation question: {page_data['producer_question']}",
+        f"What success looks like: {page_data['success_definition']}",
+        f"CTA intent for this page: {page_data['cta_intent']}",
         "Viral now for this page path: " + ", ".join(page_data["viral_now"]),
         "Likely rising next for this page path: " + ", ".join(page_data["rising_next"]),
         "Competitor-style patterns in same niche: " + ", ".join(page_data["competitor_patterns"]),
         f"Current {platform} format signals: " + ", ".join(platform_now),
         f"Likely next {platform} format signals: " + ", ".join(platform_next),
+        f"Reference / inspiration links to consider: {links}",
     ]
     return "\n".join(f"- {line}" for line in lines)
+
+
+def build_auto_cta(page_name: str, page_data: Dict[str, Any], platform: str) -> str:
+    keyword = page_data.get("cta_keyword", "START")
+    intent = page_data.get("cta_intent", "take the next step")
+    if platform == "TikTok":
+        return f"DM '{keyword}' if you want to {intent}."
+    return f"DM '{keyword}' if you want to {intent}."
 
 
 # --------------------------------------------------
@@ -481,37 +507,41 @@ def build_master_prompt(
     platform: str,
     market: str,
     role_mode: str,
-    pain_point: str,
-    offer: str,
+    auto_cta: str,
     goal: str,
     video_length: str,
     tone: str,
     uploaded_context: str,
     scenario: str,
-    producer_goal: str,
-    raw_questions: str,
-    sourcing_notes: str,
-    competitor_notes: str,
-    manual_context: str,
+    success_looks_like: str,
+    filming_subject: str,
+    reference_links: str,
+    advanced_context: str,
     intelligence_summary: str,
 ) -> str:
     role_block = (
-        "Prioritize what to shoot, who to shoot, how to structure scenes, what questions to ask, and what producer decisions increase virality."
+        "Prioritize what to shoot, who/what to shoot, what makes the subject film-worthy, how to structure scenes, what questions to ask, and what producer decisions increase virality."
         if role_mode == "Producer"
         else "Prioritize hooks, caption logic, on-screen text, scripting, wording, CTA language, and copy refinement."
     )
 
     return f"""
-You are an ELITE Singapore-first viral content strategist, retention expert, storyboard architect, platform analyst, content planner, and conversion-focused strategist for Koocester.
+You are an ELITE market-specific producer intelligence strategist, viral content strategist, retention expert, storyboard architect, platform analyst, and conversion-focused strategist for Koocester.
 
-You are not generating from scratch blindly.
-You already know the selected page's content path, audience, tone, niche memory, likely viral directions, and same-niche competitor-style patterns.
+You are NOT a generic marketing form generator.
+You must think like a real producer deciding:
+- what should be filmed
+- who should be interviewed
+- why this person/place/home/car/business/wealth story is worth watching
+- what makes the content viral or not
+- how to make the same Instagram page direction stronger
 
 ==================================================
 SYSTEM MODE
 ==================================================
 
 Selected Page: {page_name}
+Selected Instagram Page: {page_data.get('instagram_url') or 'No confirmed Instagram link provided yet.'}
 Internal Page Direction: {page_data['page_direction']}
 Known Niche Memory: {page_data['niche_memory']}
 Known Audience: {page_data['audience']}
@@ -523,26 +553,31 @@ Role Priority: {role_block}
 Goal: {goal}
 Tone: {tone}
 Video Length: {video_length}
-Producer Goal: {producer_goal}
-Offer / CTA: {offer}
-Pain Point: {pain_point}
-Scenario: {scenario if scenario.strip() else 'No specific scenario provided.'}
-Raw Questions: {raw_questions if raw_questions.strip() else 'No raw questions provided.'}
-Sourcing Notes: {sourcing_notes if sourcing_notes.strip() else 'No sourcing notes provided.'}
-Competitor / Trend Notes: {competitor_notes if competitor_notes.strip() else 'No manual competitor notes provided.'}
-Extra Manual Context: {manual_context if manual_context.strip() else 'No extra context provided.'}
+Automatic Page CTA: {auto_cta}
+CTA Intent: {page_data['cta_intent']}
+Producer Evaluation Question: {page_data['producer_question']}
+Default Success Definition: {page_data['success_definition']}
+Producer's Success Definition: {success_looks_like if success_looks_like.strip() else 'Use the default success definition and infer success from the page goal.'}
+Who / What Are We Filming: {filming_subject if filming_subject.strip() else 'Not specified. Infer the most likely subject from the selected page and scenario.'}
+Scenario / Situation: {scenario if scenario.strip() else 'No specific scenario provided. Generate based on page identity and content direction.'}
+Reference / Inspiration Links: {reference_links if reference_links.strip() else 'No reference links provided.'}
+Advanced Context: {advanced_context if advanced_context.strip() else 'No extra advanced context provided.'}
 
 ==================================================
-PUBLIC INTELLIGENCE LAYER
+HIDDEN PUBLIC INTELLIGENCE LAYER
 ==================================================
 
 {intelligence_summary}
 
 Rules:
-- Singapore only. Do not default to Malaysia.
-- Stay inside the same brand path and niche direction as the selected page.
-- Improve the page's content direction; do not replace it with random unrelated ideas.
-- Use competitor-style intelligence as inspiration, not copying.
+- {market} only. Do not switch to another country unless the selected page changes.
+- Do not ask for a pain point. Infer weaknesses yourself.
+- Stay aligned with the selected Instagram page identity and content direction.
+- Improve the page's current content path; do not replace it with random unrelated ideas.
+- Use Instagram page link, reference links, and uploaded context as direction signals.
+- Do not claim you accessed live Instagram analytics. This is a no-access/public-intelligence mode.
+- Be clear on what would become stronger if Instagram API/insights were connected.
+- For each idea, explain why this subject/person/place/content type is film-worthy.
 - Distinguish clearly between:
   1. Viral Now
   2. Likely To Go Viral Next
@@ -565,42 +600,51 @@ OUTPUT FORMAT
 
 Return in this exact structure:
 
-1. PAGE INTELLIGENCE SUMMARY
-- summarize the page identity, niche, audience, and content path
-- explain what the page should keep doing
-- explain what should improve
+1. PRODUCER STRATEGY SUMMARY
+- what page this is for
+- what Instagram page direction the content must follow
+- what success looks like
+- what the AI inferred as the main creative risk
+- what must be filmed or found to make this content work
 
-2. VIRAL NOW (SINGAPORE + SELECTED PLATFORM)
+2. VIRAL NOW ({market} + SELECTED PLATFORM)
 - 5 strong current content directions
 - why they are working now
-- what makes them platform-correct
+- how Koocester can use them without copying
 
 3. LIKELY TO GO VIRAL NEXT
 - 5 rising content directions
 - why these are rising
 - what signal suggests they may grow next
 
-4. SAME-NICHE COMPETITOR OPPORTUNITIES
+4. WHO / WHAT SHOULD WE FILM?
+- rank the best subject/person/place/content type to film
+- explain why each one could go viral
+- explain what would make each one fail
+- include interview-worthiness or tour-worthiness where relevant
+
+5. SAME-NICHE COMPETITOR OPPORTUNITIES
 - what similar niche pages are doing well conceptually
 - what Koocester can do in the same direction but better
 - what gap Koocester can fill
 
-5. 7 BEST VIDEO IDEAS FOR THIS PAGE
+6. 7 BEST VIDEO IDEAS FOR THIS PAGE
 For each idea include:
 - Hook
 - Type
 - Concept
 - Video Format
-- Why It Will Work
+- Why This Would Go Viral
+- Why This Fits The Instagram Page
 - Viewer Expectation
 - Content Requirement
 - Lead Intent
-- Why It Matches This Page
+- Film-Worthy Reason
 
-6. BEST IDEA
+7. BEST IDEA
 - explain in depth why this is strongest for this page, this platform, this market, and this role mode
 
-7. RETENTION ENGINE
+8. RETENTION ENGINE
 - Hook
 - Pattern Interrupt
 - Open Loop
@@ -609,7 +653,7 @@ For each idea include:
 - Content Expectation
 - Retention Risk
 
-8. FULL STORYBOARD
+9. FULL STORYBOARD
 For each scene include:
 - Scene Objective
 - Visual
@@ -621,13 +665,14 @@ For each scene include:
 - Transition Logic
 - Why This Scene Matters
 
-9. ROLE-SPECIFIC OUTPUT
+10. ROLE-SPECIFIC OUTPUT
 If role = Producer:
 - what footage is needed
-- who should be on camera
+- who/what should be on camera
 - what energy is needed
 - what questions should be asked
 - what to avoid while filming
+- what makes this subject/person/place worth filming
 
 If role = Copywriter:
 - best hook rewrites
@@ -636,7 +681,7 @@ If role = Copywriter:
 - on-screen text suggestions
 - wording upgrades
 
-10. VIDEO SCRIPT WITH DIALOGUE
+11. VIDEO SCRIPT WITH DIALOGUE
 - Opening Line
 - Host Dialogue
 - Supporting Dialogue / Narration
@@ -644,7 +689,7 @@ If role = Copywriter:
 - On-Screen Text
 - Closing CTA Dialogue
 
-11. VIRALITY ESTIMATE
+12. VIRALITY + LEAD ESTIMATE
 - Viral Potential Score (0-100)
 - Hook Strength Score
 - Retention Strength Score
@@ -654,15 +699,15 @@ If role = Copywriter:
 - Why it may underperform
 - What needs to improve
 
-12. CAPTION SUGGESTIONS
+13. CAPTION SUGGESTIONS
 - Caption Option 1
 - Caption Option 2
 - Caption Option 3
 - Which is strongest and why
 
-13. CTA
-- Do not generate CTA options here
-- CTA will be handled separately by the system
+14. FINAL CTA
+- Use this CTA unless the producer changes the objective:
+{auto_cta}
 """.strip()
 
 
@@ -681,9 +726,10 @@ def build_draft_review_prompt(
     intelligence_summary: str,
 ) -> str:
     return f"""
-You are an ELITE Singapore-first viral content reviewer for Koocester.
+You are an ELITE market-specific viral content reviewer for Koocester.
 
 Selected Page: {page_name}
+Instagram Page: {page_data.get('instagram_url') or 'No confirmed Instagram link provided yet.'}
 Page Direction: {page_data['page_direction']}
 Known Niche: {page_data['niche_memory']}
 Known Audience: {page_data['audience']}
@@ -694,7 +740,7 @@ Goal: {goal}
 Tone: {tone}
 Scenario: {scenario if scenario.strip() else 'No scenario provided.'}
 
-Public Intelligence Summary:
+Hidden Intelligence Summary:
 {intelligence_summary}
 
 User's Draft Video Idea:
@@ -707,9 +753,9 @@ User's Draft Caption:
 {draft_caption}
 
 Review Rules:
-- judge whether it matches the page's actual direction
-- judge whether it fits Singapore and the selected platform
-- judge whether it is better than generic content
+- judge whether it matches the selected Instagram page direction
+- judge whether it fits the selected market and the selected platform
+- judge whether the subject/person/place is actually worth filming
 - be honest and specific
 
 Return in this exact structure:
@@ -741,9 +787,10 @@ def build_idea_review_prompt(
     intelligence_summary: str,
 ) -> str:
     return f"""
-You are an ELITE Singapore-first viral content reviewer and script critic for Koocester.
+You are an ELITE market-specific viral content reviewer and script critic for Koocester.
 
 Selected Page: {page_name}
+Instagram Page: {page_data.get('instagram_url') or 'No confirmed Instagram link provided yet.'}
 Page Direction: {page_data['page_direction']}
 Known Niche: {page_data['niche_memory']}
 Known Audience: {page_data['audience']}
@@ -754,7 +801,7 @@ Goal: {goal}
 Tone: {tone}
 Scenario: {scenario if scenario.strip() else 'No scenario provided.'}
 
-Public Intelligence Summary:
+Hidden Intelligence Summary:
 {intelligence_summary}
 
 Submitted Video Idea:
@@ -772,8 +819,8 @@ Submitted Caption:
 Rules:
 - be honest
 - do not flatter weak content
-- judge whether this stays in the same page path but stronger
-- judge whether it fits Singapore and the selected platform
+- judge whether this stays in the same Instagram page path but stronger
+- judge whether it fits the selected market and the selected platform
 
 Return in this exact structure:
 1. OVERALL VERDICT
@@ -798,18 +845,16 @@ def generate_strategy(
     platform: str,
     market: str,
     role_mode: str,
-    pain_point: str,
-    offer: str,
+    auto_cta: str,
     goal: str,
     video_length: str,
     tone: str,
     uploaded_context: str,
     scenario: str,
-    producer_goal: str,
-    raw_questions: str,
-    sourcing_notes: str,
-    competitor_notes: str,
-    manual_context: str,
+    success_looks_like: str,
+    filming_subject: str,
+    reference_links: str,
+    advanced_context: str,
     intelligence_summary: str,
     model: str = DEFAULT_MODEL,
 ) -> str:
@@ -820,18 +865,16 @@ def generate_strategy(
         platform=platform,
         market=market,
         role_mode=role_mode,
-        pain_point=pain_point,
-        offer=offer,
+        auto_cta=auto_cta,
         goal=goal,
         video_length=video_length,
         tone=tone,
         uploaded_context=uploaded_context,
         scenario=scenario,
-        producer_goal=producer_goal,
-        raw_questions=raw_questions,
-        sourcing_notes=sourcing_notes,
-        competitor_notes=competitor_notes,
-        manual_context=manual_context,
+        success_looks_like=success_looks_like,
+        filming_subject=filming_subject,
+        reference_links=reference_links,
+        advanced_context=advanced_context,
         intelligence_summary=intelligence_summary,
     )
     response = client.responses.create(model=model, input=prompt)
@@ -913,7 +956,7 @@ def review_idea_and_script(
 # --------------------------------------------------
 def render_admin_analytics() -> None:
     st.divider()
-    st.subheader("📊 Admin Analytics")
+    st.subheader("Admin Analytics")
 
     logs = read_recent_logs(limit=300)
     if not logs:
@@ -938,12 +981,12 @@ def render_admin_analytics() -> None:
         with st.expander(
             f"{row['ts']} | {row.get('page', '-') or '-'} | {row['action_type']} | session {row['session_id'][:8]}"
         ):
-            st.write(f"**Page:** {row.get('page', '-')} ")
-            st.write(f"**Platform:** {row.get('platform', '-')} ")
-            st.write(f"**Market:** {row.get('market', '-')} ")
-            st.write(f"**Role Mode:** {row.get('role_mode', '-')} ")
-            st.write(f"**Goal:** {row.get('goal', '-')} ")
-            st.write(f"**Scenario:** {row.get('scenario', '-')} ")
+            st.write(f"**Page:** {row.get('page', '-')}")
+            st.write(f"**Platform:** {row.get('platform', '-')}")
+            st.write(f"**Market:** {row.get('market', '-')}")
+            st.write(f"**Role Mode:** {row.get('role_mode', '-')}")
+            st.write(f"**Goal:** {row.get('goal', '-')}")
+            st.write(f"**Scenario:** {row.get('scenario', '-')}")
             st.write(f"**Output chars:** {row.get('output_chars', 0)}")
             st.write(f"**Uploaded count:** {row.get('uploaded_count', 0)}")
             st.write(f"**Uploaded bytes:** {row.get('uploaded_total_bytes', 0)}")
@@ -953,34 +996,21 @@ def render_admin_analytics() -> None:
 # --------------------------------------------------
 # CTA ENGINE
 # --------------------------------------------------
-def generate_cta_v10(
-    goal: str,
-    platform: str,
-    page_name: str,
-    pain_point: str,
-    offer: str,
-) -> Tuple[List[str], str, str]:
-    category_keyword = {
-        "Koocester Main": "KOOCESTER",
-        "Koocester Business Singapore": "NETWORK",
-        "Koocester Autos Singapore": "AUTO",
-        "Koocester Homes Singapore": "HOME",
-        "Koocester Foodie Singapore": "FOOD",
-    }.get(page_name, "START")
-
-    pain_part = pain_point.strip() if pain_point.strip() else "this"
+def generate_cta_v10(goal: str, platform: str, page_name: str, page_data: Dict[str, Any], auto_cta: str) -> Tuple[List[str], str, str]:
+    keyword = page_data.get("cta_keyword", "START")
+    intent = page_data.get("cta_intent", "take the next step")
 
     if goal == "Leads":
         ctas = [
-            f"DM '{category_keyword}' if you're serious about {pain_part.lower()}.",
-            f"Not for everyone — DM '{category_keyword}' if you actually want the next step.",
-            f"If this sounds like you, DM '{category_keyword}' and we'll guide you from there.",
+            auto_cta,
+            f"DM '{keyword}' and we'll show you the next step.",
+            f"If this is relevant to you, DM '{keyword}'.",
         ]
     elif goal == "Engagement":
         ctas = [
             "Be honest — would you actually agree with this?",
             "Comment your take below.",
-            "Most people won't agree with this. Do you?",
+            "Tag someone who needs to see this.",
         ]
     elif goal == "Views":
         ctas = [
@@ -990,111 +1020,103 @@ def generate_cta_v10(
         ]
     else:
         ctas = [
-            "Follow for more content like this.",
+            f"Follow if you want to {intent}.",
             "If this helped, there's more coming.",
             "Stay close — more soon.",
         ]
 
-    if offer.strip():
-        ctas[0] = f"{ctas[0]} {offer.strip()}."
-
     if platform == "TikTok":
-        ctas = [cta.rstrip(".") + " 👇" for cta in ctas]
+        ctas = [cta.rstrip(".") + "" for cta in ctas]
 
     best_cta = ctas[0]
-    reasoning = "This CTA is strongest because it is direct, simple, and aligned with conversion behavior for short-form content."
+    reasoning = "This CTA is strongest because it is matched to the selected Koocester page objective instead of being manually generic."
     return ctas, best_cta, reasoning
 
 
 # --------------------------------------------------
 # UI
 # --------------------------------------------------
-st.title("🚀 Koocester SG Viral Intelligence Engine")
+st.title("Koocester Producer Intelligence Engine")
 st.caption(
-    "Singapore-first, page-aware viral intelligence for producers and copywriters. Same content path, stronger execution."
+    "Country-specific, Instagram-page-aware producer intelligence. Same content path, stronger execution."
 )
 
 session_id = get_session_id()
 render_admin_login()
 
-left, right = st.columns([1.2, 0.8], gap="large")
+left, right = st.columns([1.15, 0.85], gap="large")
 
 with left:
-    st.subheader("Viral Intelligence Brief")
+    st.subheader("Create Viral Content Direction")
 
     page_name = st.selectbox(
-        "Koocester Page",
+        "Koocester Instagram Page",
         [
             "Koocester Main",
             "Koocester Business Singapore",
             "Koocester Autos Singapore",
             "Koocester Homes Singapore",
+            "Koocester Business Malaysia",
+            "Koocester Autos Malaysia",
+            "Koocester Homes Malaysia",
+            "Koocester Wealth Singapore",
             "Koocester Foodie Singapore",
         ],
     )
     page_data = get_page_intelligence(page_name)
 
-    market = st.selectbox("Market", ["Singapore"], index=0)
-    platform = st.selectbox("Platform", ["Instagram", "TikTok"])
-    role_mode = st.selectbox("Mode", ["Producer", "Copywriter"])
+    if page_data.get("instagram_url"):
+        st.caption(f"Instagram source page: {page_data['instagram_url']}")
+    else:
+        st.caption("Instagram source page: not added yet for this page. Add the IG link later for stronger page identity.")
 
-    pain_point = st.text_input(
-        "Pain Point / Problem To Solve",
-        placeholder="e.g. weak hooks, low retention, generic event recap content, not enough strong Singapore angles",
-    )
-    offer = st.text_input(
-        "Offer / CTA",
-        placeholder="e.g. register, DM us, book consultation, visit the showroom, save this",
+    market = page_data.get("market", "Singapore")
+    st.caption(f"Country / Market: {market}")
+    platform = st.selectbox("Platform", ["Instagram", "TikTok"])
+    role_mode = st.selectbox("Output For", ["Producer", "Copywriter"])
+
+    filming_subject = st.text_area(
+        "Who / What are we filming?",
+        placeholder="e.g. founder interview, company A interview, luxury car, house tour, homeowner story, wealth expert, food spot, event room, specific person, specific content type...",
+        height=110,
     )
 
     scenario = st.text_area(
-        "Video Scenario / Situation",
-        placeholder="e.g. We have event footage, founder interview clips, venue shots, networking moments, and want a stronger Singapore-first business reel.",
+        "Situation / Context",
+        placeholder="e.g. We are interviewing Company A's founder. How can we make the interview viral while staying aligned with Koocester Business? Or: we want to do a house tour, who/what kind of home should we film for it to go viral?",
         height=130,
     )
 
-    producer_goal = st.selectbox(
-        "Producer Goal",
-        [
-            "General Content",
-            "Find Viral Talent",
-            "Interview-Based Content",
-            "Lead Generation Content",
-            "Brand Authority Content",
-        ],
+    success_looks_like = st.text_area(
+        "What success looks like",
+        placeholder="e.g. people DM us to build wealth, book a viewing, ask for renovation consultation, want to attend the business event, save the house tour, follow the page, share the reel...",
+        height=100,
     )
 
-    raw_questions = st.text_area(
-        "Raw Interview / Storyboard Questions",
-        placeholder="Paste current interview questions, producer prompts, or rough storyboard questions here...",
-        height=130,
-    )
-
-    sourcing_notes = st.text_area(
-        "Producer Sourcing Notes",
-        placeholder="Describe who you want to source, what kind of people perform well, where producers struggle, or what type of footage is missing.",
-        height=110,
-    )
-
-    competitor_notes = st.text_area(
-        "Competitor / Trend Notes",
-        placeholder="Paste notes on what similar niche pages are doing, strong hooks you noticed, rising formats, or anything you want AI to consider.",
-        height=110,
-    )
-
-    manual_context = st.text_area(
-        "Extra Manual Context",
-        placeholder="Anything else the AI should know before generating.",
+    reference_links = st.text_area(
+        "Links / References",
+        placeholder="Paste Instagram/TikTok/Reel links, competitor links, inspiration links, Google Drive links, or any content references here...",
         height=90,
     )
 
-    goal = st.selectbox("Goal", ["Views", "Engagement", "Leads", "Awareness"], index=["Views", "Engagement", "Leads", "Awareness"].index(page_data["default_goal"]))
+    goal = st.selectbox(
+        "Main Goal",
+        ["Views", "Engagement", "Leads", "Awareness"],
+        index=["Views", "Engagement", "Leads", "Awareness"].index(page_data["default_goal"]),
+    )
     video_length = st.selectbox(
         "Video Length",
         page_data["allowed_lengths"],
         index=page_data["allowed_lengths"].index(page_data["recommended_length"]),
     )
-    tone = st.selectbox("Tone", ["Premium", "Bold", "Educational", "Emotional", "Direct"], index=["Premium", "Bold", "Educational", "Emotional", "Direct"].index(page_data["tone"]))
+    tone = st.selectbox(
+        "Tone",
+        ["Premium", "Bold", "Educational", "Emotional", "Direct"],
+        index=["Premium", "Bold", "Educational", "Emotional", "Direct"].index(page_data["tone"]),
+    )
+
+    auto_cta = build_auto_cta(page_name, page_data, platform)
+    st.info(f"Auto CTA for this page: {auto_cta}")
 
     uploaded_files = st.file_uploader(
         "Upload supporting files (optional)",
@@ -1103,98 +1125,90 @@ with left:
         help="Upload scripts, decks, notes, references, or anything useful for generation.",
     )
 
-    st.divider()
-    st.subheader("Draft Review")
+    advanced_context = ""
+    draft_video_idea = ""
+    draft_cta = ""
+    draft_caption = ""
+    review_video_idea = ""
+    review_script = ""
+    review_cta = ""
+    review_caption = ""
 
-    draft_video_idea = st.text_area(
-        "Draft Video Idea",
-        placeholder="Paste your draft video idea here...",
-        height=120,
-    )
-    draft_cta = st.text_input("Draft CTA", placeholder="e.g. DM us / Register now / Save this")
-    draft_caption = st.text_area("Draft Caption", placeholder="Paste your draft caption here...", height=100)
+    if SHOW_ADVANCED_FIELDS or is_admin():
+        with st.expander("Advanced / Admin Tools", expanded=False):
+            advanced_context = st.text_area(
+                "Extra Manual Context",
+                placeholder="Anything else the AI should know before generating.",
+                height=100,
+            )
 
-    st.divider()
-    st.subheader("Idea / Script Review")
+            st.divider()
+            st.subheader("Draft Review")
+            draft_video_idea = st.text_area("Draft Video Idea", placeholder="Paste your draft video idea here...", height=100)
+            draft_cta = st.text_input("Draft CTA", placeholder="e.g. DM us / Register now / Save this")
+            draft_caption = st.text_area("Draft Caption", placeholder="Paste your draft caption here...", height=90)
 
-    review_video_idea = st.text_area("Your Video Idea", placeholder="Paste your idea here...", height=100)
-    review_script = st.text_area("Your Draft Script", placeholder="Paste your script here...", height=170)
-    review_cta = st.text_input("Your Draft CTA", placeholder="e.g. DM us / Register now")
-    review_caption = st.text_area("Your Draft Caption", placeholder="Paste your draft caption here...", height=100)
+            st.divider()
+            st.subheader("Idea / Script Review")
+            review_video_idea = st.text_area("Your Video Idea", placeholder="Paste your idea here...", height=90)
+            review_script = st.text_area("Your Draft Script", placeholder="Paste your script here...", height=140)
+            review_cta = st.text_input("Your Draft CTA", placeholder="e.g. DM us / Register now")
+            review_caption = st.text_area("Your Draft Caption", placeholder="Paste your draft caption here...", height=90)
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        generate = st.button("Build Viral Intelligence", use_container_width=True)
+        generate = st.button("Build Viral Direction", use_container_width=True)
     with c2:
-        review_draft_btn = st.button("Rate & Improve Draft", use_container_width=True)
+        review_draft_btn = st.button("Rate Draft", use_container_width=True, disabled=not is_admin())
     with c3:
-        review_idea_btn = st.button("Rate My Idea / Script", use_container_width=True)
+        review_idea_btn = st.button("Rate Script", use_container_width=True, disabled=not is_admin())
 
 with right:
-    st.subheader("Page Intelligence Preview")
-    st.write(f"**Selected Page:** {page_name}")
+    st.subheader("Selected Direction")
+    st.write(f"**Page:** {page_name}")
     st.write(f"**Market:** {market}")
     st.write(f"**Platform:** {platform}")
-    st.write(f"**Mode:** {role_mode}")
-    st.write(f"**Known Audience:** {page_data['audience']}")
-    st.write(f"**Known Lead Type:** {page_data['lead_type']}")
-    st.write(f"**Known Niche Path:** {page_data['niche_memory']}")
-    st.write(f"**Recommended Mode:** {page_data['recommended_mode']}")
-    st.write(f"**Recommended Length:** {page_data['recommended_length']}")
-    st.write(f"**Selected Length:** {video_length}")
-    st.write(f"**Tone:** {tone}")
+    st.write(f"**Output For:** {role_mode}")
     st.write(f"**Goal:** {goal}")
-
-    st.divider()
-    st.subheader("Viral Now")
-    for item in page_data["viral_now"]:
-        st.write(f"- {item}")
-
-    st.subheader("Likely Next")
-    for item in page_data["rising_next"]:
-        st.write(f"- {item}")
-
-    st.subheader("Same-Niche Competitor Patterns")
-    for item in page_data["competitor_patterns"]:
-        st.write(f"- {item}")
+    st.write(f"**Video Length:** {video_length}")
+    st.write(f"**Tone:** {tone}")
+    st.write(f"**CTA Intent:** {page_data['cta_intent']}")
 
     uploaded_context, uploaded_files_json, uploaded_count, uploaded_total_bytes = summarize_uploaded_files(uploaded_files)
     st.divider()
     st.subheader("Upload Summary")
     st.write(f"**Files uploaded:** {uploaded_count}")
-    st.write(f"**Total size (bytes):** {uploaded_total_bytes}")
+    st.write(f"**Total size:** {uploaded_total_bytes} bytes")
     if uploaded_count:
         st.code(uploaded_context, language="text")
 
-intelligence_summary = build_public_intelligence_summary(page_data, platform)
+intelligence_summary = build_public_intelligence_summary(page_name, page_data, platform, reference_links)
 
-st.divider()
-st.subheader("Public Intelligence Layer")
-st.code(intelligence_summary, language="text")
+if SHOW_PUBLIC_INTELLIGENCE or is_admin():
+    with st.expander("Backend Intelligence Layer", expanded=False):
+        st.code(intelligence_summary, language="text")
 
-st.divider()
-st.subheader("Master Prompt Preview")
-master_prompt = build_master_prompt(
-    page_name=page_name,
-    page_data=page_data,
-    platform=platform,
-    market=market,
-    role_mode=role_mode,
-    pain_point=pain_point,
-    offer=offer,
-    goal=goal,
-    video_length=video_length,
-    tone=tone,
-    uploaded_context=uploaded_context,
-    scenario=scenario,
-    producer_goal=producer_goal,
-    raw_questions=raw_questions,
-    sourcing_notes=sourcing_notes,
-    competitor_notes=competitor_notes,
-    manual_context=manual_context,
-    intelligence_summary=intelligence_summary,
-)
-st.code(master_prompt, language="text")
+if SHOW_DEBUG_PROMPTS or is_admin():
+    with st.expander("Master Prompt Preview", expanded=False):
+        master_prompt = build_master_prompt(
+            page_name=page_name,
+            page_data=page_data,
+            platform=platform,
+            market=market,
+            role_mode=role_mode,
+            auto_cta=auto_cta,
+            goal=goal,
+            video_length=video_length,
+            tone=tone,
+            uploaded_context=uploaded_context,
+            scenario=scenario,
+            success_looks_like=success_looks_like,
+            filming_subject=filming_subject,
+            reference_links=reference_links,
+            advanced_context=advanced_context,
+            intelligence_summary=intelligence_summary,
+        )
+        st.code(master_prompt, language="text")
 
 
 # --------------------------------------------------
@@ -1202,10 +1216,10 @@ st.code(master_prompt, language="text")
 # --------------------------------------------------
 if generate:
     missing: List[str] = []
-    if not offer.strip():
-        missing.append("Offer / CTA")
-    if not pain_point.strip():
-        missing.append("Pain Point / Problem To Solve")
+    if not filming_subject.strip() and not scenario.strip():
+        missing.append("Who / What are we filming OR Situation / Context")
+    if not success_looks_like.strip():
+        missing.append("What success looks like")
 
     ip_value, ip_source = get_ip_if_available()
     user_agent = get_user_agent()
@@ -1222,8 +1236,8 @@ if generate:
                 "niche": page_data["niche_memory"],
                 "audience": page_data["audience"],
                 "lead_type": page_data["lead_type"],
-                "pain_point": pain_point,
-                "offer": offer,
+                "pain_point": "auto_inferred",
+                "offer": auto_cta,
                 "goal": goal,
                 "video_length": video_length,
                 "tone": tone,
@@ -1236,31 +1250,29 @@ if generate:
                 "uploaded_count": uploaded_count,
                 "ip_value": ip_value,
                 "ip_source": ip_source,
-                "notes": "Missing required fields",
+                "notes": "Missing required producer fields",
             }
         )
         st.error("Please fill in: " + ", ".join(missing))
     else:
         try:
-            with st.spinner("Building Singapore-first viral intelligence..."):
+            with st.spinner("Building Instagram-page-aware viral direction..."):
                 output = generate_strategy(
                     page_name=page_name,
                     page_data=page_data,
                     platform=platform,
                     market=market,
                     role_mode=role_mode,
-                    pain_point=pain_point,
-                    offer=offer,
+                    auto_cta=auto_cta,
                     goal=goal,
                     video_length=video_length,
                     tone=tone,
                     uploaded_context=uploaded_context,
                     scenario=scenario,
-                    producer_goal=producer_goal,
-                    raw_questions=raw_questions,
-                    sourcing_notes=sourcing_notes,
-                    competitor_notes=competitor_notes,
-                    manual_context=manual_context,
+                    success_looks_like=success_looks_like,
+                    filming_subject=filming_subject,
+                    reference_links=reference_links,
+                    advanced_context=advanced_context,
                     intelligence_summary=intelligence_summary,
                     model=DEFAULT_MODEL,
                 )
@@ -1276,8 +1288,8 @@ if generate:
                     "niche": page_data["niche_memory"],
                     "audience": page_data["audience"],
                     "lead_type": page_data["lead_type"],
-                    "pain_point": pain_point,
-                    "offer": offer,
+                    "pain_point": "auto_inferred",
+                    "offer": auto_cta,
                     "goal": goal,
                     "video_length": video_length,
                     "tone": tone,
@@ -1295,27 +1307,26 @@ if generate:
             )
 
             st.divider()
-            st.subheader("Generated Viral Intelligence")
+            st.subheader("Generated Viral Direction")
             st.markdown(output)
 
             cta_options, best_cta, reasoning = generate_cta_v10(
                 goal=goal,
                 platform=platform,
                 page_name=page_name,
-                pain_point=pain_point,
-                offer=offer,
+                page_data=page_data,
+                auto_cta=auto_cta,
             )
 
             st.divider()
-            st.subheader("🚀 CTA Engine")
+            st.subheader("CTA Engine")
             st.markdown("### CTA Options")
             for i, cta in enumerate(cta_options, 1):
                 st.write(f"{i}. {cta}")
 
-            st.markdown("### ⭐ Best CTA")
+            st.markdown("### Best CTA")
             st.success(best_cta)
-
-            st.markdown("### 🧠 Why This Works")
+            st.markdown("### Why This Works")
             st.write(reasoning)
 
         except Exception as e:
@@ -1330,8 +1341,8 @@ if generate:
                     "niche": page_data["niche_memory"],
                     "audience": page_data["audience"],
                     "lead_type": page_data["lead_type"],
-                    "pain_point": pain_point,
-                    "offer": offer,
+                    "pain_point": "auto_inferred",
+                    "offer": auto_cta,
                     "goal": goal,
                     "video_length": video_length,
                     "tone": tone,
@@ -1351,9 +1362,9 @@ if generate:
 
 
 # --------------------------------------------------
-# REVIEW DRAFT
+# ADMIN REVIEW TOOLS
 # --------------------------------------------------
-if review_draft_btn:
+if review_draft_btn and is_admin():
     review_missing: List[str] = []
     if not draft_video_idea.strip():
         review_missing.append("Draft Video Idea")
@@ -1390,10 +1401,7 @@ if review_draft_btn:
             st.error(str(e))
 
 
-# --------------------------------------------------
-# REVIEW IDEA / SCRIPT
-# --------------------------------------------------
-if review_idea_btn:
+if review_idea_btn and is_admin():
     missing_review: List[str] = []
     if not review_video_idea.strip():
         missing_review.append("Your Video Idea")
@@ -1438,5 +1446,7 @@ if is_admin():
 
 st.divider()
 st.caption(
-    "Final file: Singapore-first, page-aware viral intelligence engine with producer/copywriter mode, draft review, idea/script review, analytics, and CTA engine."
+    "Final file: Country-specific, Instagram-page-aware producer intelligence engine with hidden backend intelligence, auto CTA, admin review tools, and analytics."
 )
+
+
