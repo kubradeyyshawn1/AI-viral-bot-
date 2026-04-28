@@ -472,8 +472,8 @@ def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any],
     links = reference_links.strip() if reference_links.strip() else "No extra links provided by producer."
 
     lines = [
-        "Market focus: {page_data.get('market', 'Singapore')} only.",
-        f"Selected Instagram page identity: {page_name} — {ig_url}",
+        f"Market focus: {page_data.get('market', 'Singapore')} only.",
+        f"Selected Instagram page identity: {page_name} - {ig_url}",
         f"Page direction memory: {page_data['page_direction']}",
         f"Known page niche: {page_data['niche_memory']}",
         f"Known audience: {page_data['audience']}",
@@ -1008,13 +1008,13 @@ def generate_cta_v10(goal: str, platform: str, page_name: str, page_data: Dict[s
         ]
     elif goal == "Engagement":
         ctas = [
-            "Be honest — would you actually agree with this?",
+            "Be honest - would you actually agree with this?",
             "Comment your take below.",
             "Tag someone who needs to see this.",
         ]
     elif goal == "Views":
         ctas = [
-            "Watch this again — you probably missed the real point.",
+            "Watch this again - you probably missed the real point.",
             "Most people don't catch this the first time.",
             "Wait till the end before you judge this.",
         ]
@@ -1022,7 +1022,7 @@ def generate_cta_v10(goal: str, platform: str, page_name: str, page_data: Dict[s
         ctas = [
             f"Follow if you want to {intent}.",
             "If this helped, there's more coming.",
-            "Stay close — more soon.",
+            "Stay close - more soon.",
         ]
 
     if platform == "TikTok":
@@ -1072,43 +1072,28 @@ with left:
 
     market = page_data.get("market", "Singapore")
     st.caption(f"Country / Market: {market}")
+
     platform = st.selectbox("Platform", ["Instagram", "TikTok"])
     role_mode = st.selectbox("Output For", ["Producer", "Copywriter"])
 
-    filming_subject = st.text_area(
-        "Who / What are we filming?",
-        placeholder="e.g. founder interview, company A interview, luxury car, house tour, homeowner story, wealth expert, food spot, event room, specific person, specific content type...",
-        height=110,
-    )
-
-    scenario = st.text_area(
-        "Situation / Context",
-        placeholder="e.g. We are interviewing Company A's founder. How can we make the interview viral while staying aligned with Koocester Business? Or: we want to do a house tour, who/what kind of home should we film for it to go viral?",
-        height=130,
-    )
-
-    success_looks_like = st.text_area(
-        "What success looks like",
-        placeholder="e.g. people DM us to build wealth, book a viewing, ask for renovation consultation, want to attend the business event, save the house tour, follow the page, share the reel...",
-        height=100,
-    )
-
-    reference_links = st.text_area(
-        "Links / References",
-        placeholder="Paste Instagram/TikTok/Reel links, competitor links, inspiration links, Google Drive links, or any content references here...",
-        height=90,
-    )
+    # Hidden backend fields. They are intentionally removed from the producer interface.
+    filming_subject = ""
+    scenario = ""
+    success_looks_like = page_data.get("success_definition", "")
+    reference_links = ""
 
     goal = st.selectbox(
         "Main Goal",
         ["Views", "Engagement", "Leads", "Awareness"],
         index=["Views", "Engagement", "Leads", "Awareness"].index(page_data["default_goal"]),
     )
+
     video_length = st.selectbox(
         "Video Length",
         page_data["allowed_lengths"],
         index=page_data["allowed_lengths"].index(page_data["recommended_length"]),
     )
+
     tone = st.selectbox(
         "Tone",
         ["Premium", "Bold", "Educational", "Emotional", "Direct"],
@@ -1144,7 +1129,11 @@ with left:
 
             st.divider()
             st.subheader("Draft Review")
-            draft_video_idea = st.text_area("Draft Video Idea", placeholder="Paste your draft video idea here...", height=100)
+            draft_video_idea = st.text_area(
+                "Draft Video Idea",
+                placeholder="Paste your draft video idea here...",
+                height=100,
+            )
             draft_cta = st.text_input("Draft CTA", placeholder="e.g. DM us / Register now / Save this")
             draft_caption = st.text_area("Draft Caption", placeholder="Paste your draft caption here...", height=90)
 
@@ -1215,16 +1204,31 @@ if SHOW_DEBUG_PROMPTS or is_admin():
 # GENERATE MAIN STRATEGY
 # --------------------------------------------------
 if generate:
-    missing: List[str] = []
-    if not filming_subject.strip() and not scenario.strip():
-        missing.append("Who / What are we filming OR Situation / Context")
-    if not success_looks_like.strip():
-        missing.append("What success looks like")
-
     ip_value, ip_source = get_ip_if_available()
     user_agent = get_user_agent()
 
-    if missing:
+    try:
+        with st.spinner("Building Instagram-page-aware viral direction..."):
+            output = generate_strategy(
+                page_name=page_name,
+                page_data=page_data,
+                platform=platform,
+                market=market,
+                role_mode=role_mode,
+                auto_cta=auto_cta,
+                goal=goal,
+                video_length=video_length,
+                tone=tone,
+                uploaded_context=uploaded_context,
+                scenario=scenario,
+                success_looks_like=success_looks_like,
+                filming_subject=filming_subject,
+                reference_links=reference_links,
+                advanced_context=advanced_context,
+                intelligence_summary=intelligence_summary,
+                model=DEFAULT_MODEL,
+            )
+
         insert_usage_log(
             {
                 "ts": datetime.now(timezone.utc).isoformat(),
@@ -1242,7 +1246,60 @@ if generate:
                 "video_length": video_length,
                 "tone": tone,
                 "scenario": scenario,
-                "action_type": "validation_error",
+                "action_type": "generate",
+                "output_chars": len(output or ""),
+                "user_agent": user_agent,
+                "uploaded_files_json": uploaded_files_json,
+                "uploaded_total_bytes": uploaded_total_bytes,
+                "uploaded_count": uploaded_count,
+                "ip_value": ip_value,
+                "ip_source": ip_source,
+                "notes": intelligence_summary[:1000],
+            }
+        )
+
+        st.divider()
+        st.subheader("Generated Viral Direction")
+        st.markdown(output)
+
+        cta_options, best_cta, reasoning = generate_cta_v10(
+            goal=goal,
+            platform=platform,
+            page_name=page_name,
+            page_data=page_data,
+            auto_cta=auto_cta,
+        )
+
+        st.divider()
+        st.subheader("CTA Engine")
+        st.markdown("### CTA Options")
+        for i, cta in enumerate(cta_options, 1):
+            st.write(f"{i}. {cta}")
+
+        st.markdown("### Best CTA")
+        st.success(best_cta)
+        st.markdown("### Why This Works")
+        st.write(reasoning)
+
+    except Exception as e:
+        insert_usage_log(
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "session_id": session_id,
+                "page": page_name,
+                "platform": platform,
+                "market": market,
+                "role_mode": role_mode,
+                "niche": page_data["niche_memory"],
+                "audience": page_data["audience"],
+                "lead_type": page_data["lead_type"],
+                "pain_point": "auto_inferred",
+                "offer": auto_cta,
+                "goal": goal,
+                "video_length": video_length,
+                "tone": tone,
+                "scenario": scenario,
+                "action_type": "generation_error",
                 "output_chars": 0,
                 "user_agent": user_agent,
                 "uploaded_files_json": uploaded_files_json,
@@ -1250,115 +1307,10 @@ if generate:
                 "uploaded_count": uploaded_count,
                 "ip_value": ip_value,
                 "ip_source": ip_source,
-                "notes": "Missing required producer fields",
+                "notes": str(e),
             }
         )
-        st.error("Please fill in: " + ", ".join(missing))
-    else:
-        try:
-            with st.spinner("Building Instagram-page-aware viral direction..."):
-                output = generate_strategy(
-                    page_name=page_name,
-                    page_data=page_data,
-                    platform=platform,
-                    market=market,
-                    role_mode=role_mode,
-                    auto_cta=auto_cta,
-                    goal=goal,
-                    video_length=video_length,
-                    tone=tone,
-                    uploaded_context=uploaded_context,
-                    scenario=scenario,
-                    success_looks_like=success_looks_like,
-                    filming_subject=filming_subject,
-                    reference_links=reference_links,
-                    advanced_context=advanced_context,
-                    intelligence_summary=intelligence_summary,
-                    model=DEFAULT_MODEL,
-                )
-
-            insert_usage_log(
-                {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "session_id": session_id,
-                    "page": page_name,
-                    "platform": platform,
-                    "market": market,
-                    "role_mode": role_mode,
-                    "niche": page_data["niche_memory"],
-                    "audience": page_data["audience"],
-                    "lead_type": page_data["lead_type"],
-                    "pain_point": "auto_inferred",
-                    "offer": auto_cta,
-                    "goal": goal,
-                    "video_length": video_length,
-                    "tone": tone,
-                    "scenario": scenario,
-                    "action_type": "generate",
-                    "output_chars": len(output or ""),
-                    "user_agent": user_agent,
-                    "uploaded_files_json": uploaded_files_json,
-                    "uploaded_total_bytes": uploaded_total_bytes,
-                    "uploaded_count": uploaded_count,
-                    "ip_value": ip_value,
-                    "ip_source": ip_source,
-                    "notes": intelligence_summary[:1000],
-                }
-            )
-
-            st.divider()
-            st.subheader("Generated Viral Direction")
-            st.markdown(output)
-
-            cta_options, best_cta, reasoning = generate_cta_v10(
-                goal=goal,
-                platform=platform,
-                page_name=page_name,
-                page_data=page_data,
-                auto_cta=auto_cta,
-            )
-
-            st.divider()
-            st.subheader("CTA Engine")
-            st.markdown("### CTA Options")
-            for i, cta in enumerate(cta_options, 1):
-                st.write(f"{i}. {cta}")
-
-            st.markdown("### Best CTA")
-            st.success(best_cta)
-            st.markdown("### Why This Works")
-            st.write(reasoning)
-
-        except Exception as e:
-            insert_usage_log(
-                {
-                    "ts": datetime.now(timezone.utc).isoformat(),
-                    "session_id": session_id,
-                    "page": page_name,
-                    "platform": platform,
-                    "market": market,
-                    "role_mode": role_mode,
-                    "niche": page_data["niche_memory"],
-                    "audience": page_data["audience"],
-                    "lead_type": page_data["lead_type"],
-                    "pain_point": "auto_inferred",
-                    "offer": auto_cta,
-                    "goal": goal,
-                    "video_length": video_length,
-                    "tone": tone,
-                    "scenario": scenario,
-                    "action_type": "generation_error",
-                    "output_chars": 0,
-                    "user_agent": user_agent,
-                    "uploaded_files_json": uploaded_files_json,
-                    "uploaded_total_bytes": uploaded_total_bytes,
-                    "uploaded_count": uploaded_count,
-                    "ip_value": ip_value,
-                    "ip_source": ip_source,
-                    "notes": str(e),
-                }
-            )
-            st.error(str(e))
+        st.error(str(e))
 
 
 # --------------------------------------------------
@@ -1448,5 +1400,6 @@ st.divider()
 st.caption(
     "Final file: Country-specific, Instagram-page-aware producer intelligence engine with hidden backend intelligence, auto CTA, admin review tools, and analytics."
 )
+
 
 
