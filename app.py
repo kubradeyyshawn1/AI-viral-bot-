@@ -437,6 +437,30 @@ def get_page_intelligence(page_name: str) -> Dict[str, Any]:
     return PAGE_INTELLIGENCE[page_name]
 
 
+def get_market_pages(market: str) -> List[str]:
+    return [name for name, data in PAGE_INTELLIGENCE.items() if data.get("market") == market]
+
+
+def get_connected_instagram_status(page_data: Dict[str, Any]) -> str:
+    instagram_url = page_data.get("instagram_url", "")
+    if not instagram_url:
+        return "Instagram page link is not added yet. The engine will rely on stored page intelligence only."
+    return "Instagram page link is added. Live analytics are not connected yet, so the engine uses stored page intelligence plus the page identity."
+
+
+def build_page_readiness_notes(page_name: str, page_data: Dict[str, Any], platform: str) -> str:
+    market = page_data.get("market", "Singapore")
+    same_market_pages = get_market_pages(market)
+    return (
+        f"Selected page: {page_name}\n"
+        f"Market: {market}\n"
+        f"Platform: {platform}\n"
+        f"Instagram status: {get_connected_instagram_status(page_data)}\n"
+        f"Same-market pages available in system: {', '.join(same_market_pages)}\n"
+        "Current mode: no live Instagram API access. Do not claim live scraping, live analytics, or real-time account scanning."
+    )
+
+
 # --------------------------------------------------
 # VIRAL INTELLIGENCE / TREND LAYER (NO ACCOUNT ACCESS)
 # --------------------------------------------------
@@ -470,8 +494,10 @@ def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any],
 
     ig_url = page_data.get("instagram_url") or "No confirmed Instagram link provided yet."
     links = reference_links.strip() if reference_links.strip() else "No extra links provided by producer."
+    readiness_notes = build_page_readiness_notes(page_name, page_data, platform)
 
     lines = [
+        "System readiness notes: " + readiness_notes.replace("\n", " | "),
         f"Market focus: {page_data.get('market', 'Singapore')} only.",
         f"Selected Instagram page identity: {page_name} - {ig_url}",
         f"Page direction memory: {page_data['page_direction']}",
@@ -584,6 +610,24 @@ Rules:
   3. Same-Niche Competitor Opportunity
 - Be realistic and practical.
 - No generic filler logic.
+- Do not invent analytics, follower numbers, view counts, watch time, saves, shares, comments, or live trend data.
+- Use phrases like "likely", "inferred", or "based on stored page intelligence" when live Instagram access is not connected.
+- If the selected page has a confirmed Instagram link, treat it as the page identity anchor.
+- If reference links or uploaded files are provided, use them as stronger signals than general assumptions.
+- Keep the original Koocester brand direction and improve execution only.
+
+==================================================
+QUALITY CONTROL CHECK BEFORE ANSWERING
+==================================================
+
+Before producing the final answer, internally check:
+1. Does the idea match the selected page and market?
+2. Is the subject film-worthy?
+3. Is the hook strong within the first 2 seconds?
+4. Is there a clear retention path?
+5. Is the CTA aligned with the page objective?
+6. Is the recommendation practical for a producer or copywriter?
+7. Did you avoid claiming live Instagram analytics?
 
 ==================================================
 UPLOADED FILE CONTEXT
@@ -705,7 +749,15 @@ If role = Copywriter:
 - Caption Option 3
 - Which is strongest and why
 
-14. FINAL CTA
+14. PRODUCER EXECUTION CHECKLIST
+- must-have footage
+- must-have first 2 seconds
+- must-have on-screen text
+- must-have emotional or curiosity trigger
+- what to avoid
+- what the editor must emphasize
+
+15. FINAL CTA
 - Use this CTA unless the producer changes the objective:
 {auto_cta}
 """.strip()
@@ -1162,6 +1214,7 @@ with right:
     st.write(f"**Video Length:** {video_length}")
     st.write(f"**Tone:** {tone}")
     st.write(f"**CTA Intent:** {page_data['cta_intent']}")
+    st.write(f"**Instagram Status:** {get_connected_instagram_status(page_data)}")
 
     uploaded_context, uploaded_files_json, uploaded_count, uploaded_total_bytes = summarize_uploaded_files(uploaded_files)
     st.divider()
