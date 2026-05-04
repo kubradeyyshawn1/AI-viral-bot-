@@ -3,7 +3,7 @@ import json
 import uuid
 import sqlite3
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Tuple, Any
 from urllib.parse import urlencode
 from urllib.request import urlopen, Request
@@ -31,6 +31,30 @@ SHOW_ADVANCED_FIELDS = False
 SHOW_DEBUG_PROMPTS = False
 SHOW_PUBLIC_INTELLIGENCE = False
 SHOW_PAGE_INTELLIGENCE_PREVIEW = False
+
+
+# --------------------------------------------------
+# STREAMLIT SECRETS TEMPLATE
+# --------------------------------------------------
+SECRETS_TEMPLATE = """
+OPENAI_API_KEY = "your_openai_api_key_here"
+ADMIN_PASSWORD = "your_admin_password_here"
+
+# Optional Meta / Instagram own-account analytics.
+# Use official Meta API only. Do not commit real values to GitHub.
+META_ACCESS_TOKEN = "your_meta_access_token_here"
+
+# Map each page internal_key to its Instagram Business/Creator User ID.
+IG_USER_ID_MAP_JSON = "{\"main\":\"\",\"business\":\"\",\"autos\":\"\",\"homes\":\"\",\"business_my\":\"\",\"autos_my\":\"\",\"homes_my\":\"\",\"wealth\":\"\",\"foodie\":\"\"}"
+
+# Optional latest public trend feed.
+# This is needed for latest public viral scanning beyond your own account analytics.
+TREND_FEED_API_URL = ""
+
+# Optional manual trend feed JSON fallback.
+# Keep only recent items. posted_at must be ISO format.
+TREND_FEED_JSON = "[]"
+"""
 
 
 # --------------------------------------------------
@@ -354,6 +378,191 @@ def summarize_live_analytics_for_prompt(live_data: Dict[str, Any]) -> str:
 
 
 # --------------------------------------------------
+# LATEST VIRAL TREND FEED CONNECTOR
+# --------------------------------------------------
+def parse_datetime_safe(value: str) -> datetime | None:
+    if not value:
+        return None
+    try:
+        normalized = str(value).replace("Z", "+00:00")
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def normalize_trend_item(item: Dict[str, Any]) -> Dict[str, Any]:
+    posted_at = parse_datetime_safe(str(item.get("posted_at") or item.get("timestamp") or item.get("date") or ""))
+    now = datetime.now(timezone.utc)
+    age_days = None
+    if posted_at:
+        age_days = max(0, (now - posted_at).days)
+
+    views = int(item.get("views") or item.get("play_count") or item.get("view_count") or 0)
+    likes = int(item.get("likes") or item.get("like_count") or 0)
+    comments = int(item.get("comments") or item.get("comment_count") or 0)
+    shares = int(item.get("shares") or item.get("share_count") or 0)
+    saves = int(item.get("saves") or item.get("save_count") or 0)
+
+    engagement_score = (likes * 1) + (comments * 3) + (shares * 5) + (saves * 4)
+    if views > 0:
+        engagement_rate = round(engagement_score / views, 4)
+    else:
+        engagement_rate = 0
+
+    velocity_score = engagement_score
+    if age_days is not None:
+        velocity_score = round(engagement_score / max(age_days + 1, 1), 2)
+
+    if age_days is not None and age_days <= 7:
+        recency_bucket = "viral_now_candidate"
+    elif age_days is not None and age_days <= 14:
+        recency_bucket = "rising_candidate"
+    elif age_days is not None and age_days <= 30:
+        recency_bucket = "pattern_validation_only"
+    else:
+        recency_bucket = "too_old_ignore_unless_repeated"
+
+    normalized = dict(item)
+    normalized.update(
+        {
+            "posted_at_parsed": posted_at.isoformat() if posted_at else "",
+            "age_days": age_days,
+            "views": views,
+            "likes": likes,
+            "comments": comments,
+            "shares": shares,
+            "saves": saves,
+            "engagement_score": engagement_score,
+            "engagement_rate": engagement_rate,
+            "velocity_score": velocity_score,
+            "recency_bucket": recency_bucket,
+        }
+    )
+    return normalized
+
+
+def fetch_latest_trend_feed(page_data: Dict[str, Any], platform: str, limit: int = 40, manual_trend_json: str = "") -> Dict[str, Any]:
+    """
+    Optional external trend feed.
+
+    Add one of these to Streamlit secrets:
+    TREND_FEED_API_URL = "https://your-trend-provider.com/api/latest"
+    or
+    TREND_FEED_JSON = "[{...}, {...}]"
+
+    Expected item fields can include:
+    title, url, caption, posted_at, views, likes, comments, shares, saves,
+    country/market, niche, platform, account, format.
+    """
+    market = page_data.get("market", "")
+    niche_key = page_data.get("internal_key", "")
+    feed_url = st.secrets.get("TREND_FEED_API_URL", "") or os.getenv("TREND_FEED_API_URL", "")
+    feed_json = manual_trend_json.strip() or st.secrets.get("TREND_FEED_JSON", "") or os.getenv("TREND_FEED_JSON", "")
+
+    raw_items: List[Dict[str, Any]] = []
+
+    if feed_url:
+        try:
+            query = urlencode({"market": market, "niche": niche_key, "platform": platform, "limit": limit})
+            request = Request(f"{feed_url}?{query}", headers={"User-Agent": "KoocesterTrendScanner/1.0"})
+            with urlopen(request, timeout=25) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+                if isinstance(payload, dict):
+                    raw_items = payload.get("items") or payload.get("data") or []
+                elif isinstance(payload, list):
+                    raw_items = payload
+        except Exception as error:
+            return {
+                "connected": False,
+                "status": f"Trend feed fetch failed: {error}",
+                "items": [],
+            }
+    elif feed_json:
+        payload = safe_json_loads(feed_json, [])
+        if isinstance(payload, dict):
+            raw_items = payload.get("items") or payload.get("data") or []
+        elif isinstance(payload, list):
+            raw_items = payload
+
+    if not raw_items:
+        return {
+            "connected": False,
+            "status": "Latest public trend feed is not connected. Add TREND_FEED_API_URL or TREND_FEED_JSON for real latest viral scanning.",
+            "items": [],
+        }
+
+    normalized_items = [normalize_trend_item(item) for item in raw_items if isinstance(item, dict)]
+
+    filtered_items = []
+    for item in normalized_items:
+        item_market = str(item.get("market") or item.get("country") or "").lower()
+        item_platform = str(item.get("platform") or "").lower()
+        age_days = item.get("age_days")
+
+        if item_market and market.lower() not in item_market and item_market not in market.lower():
+            continue
+        if item_platform and platform.lower() not in item_platform:
+            continue
+        if age_days is not None and age_days > 30:
+            continue
+
+        filtered_items.append(item)
+
+    filtered_items.sort(key=lambda item: (item.get("recency_bucket") != "viral_now_candidate", -item.get("velocity_score", 0)))
+
+    return {
+        "connected": True,
+        "status": "Latest trend feed connected. Recency filter active: 0-7 days viral now, 8-14 days rising, 15-30 days validation only.",
+        "items": filtered_items[:limit],
+    }
+
+
+def summarize_latest_trends_for_prompt(trend_data: Dict[str, Any]) -> str:
+    if not trend_data.get("connected"):
+        return trend_data.get("status", "Latest trend feed unavailable.")
+
+    items = trend_data.get("items", [])
+    if not items:
+        return "Latest trend feed connected, but no matching recent items found for this page, market, and platform."
+
+    buckets = {
+        "viral_now_candidate": [],
+        "rising_candidate": [],
+        "pattern_validation_only": [],
+    }
+
+    for item in items:
+        bucket = item.get("recency_bucket", "pattern_validation_only")
+        if bucket in buckets:
+            buckets[bucket].append(item)
+
+    lines = [trend_data.get("status", "Latest trend feed connected.")]
+    labels = {
+        "viral_now_candidate": "Viral now candidates, posted within 7 days",
+        "rising_candidate": "Rising candidates, posted within 14 days",
+        "pattern_validation_only": "Pattern validation only, posted within 30 days",
+    }
+
+    for bucket, label in labels.items():
+        lines.append(label + ":")
+        for rank, item in enumerate(buckets.get(bucket, [])[:8], start=1):
+            title = str(item.get("title") or item.get("format") or item.get("caption") or "Untitled").replace("\n", " ")
+            if len(title) > 150:
+                title = title[:150] + "..."
+            lines.append(
+                f"{rank}. age_days={item.get('age_days')}; views={item.get('views')}; "
+                f"likes={item.get('likes')}; comments={item.get('comments')}; shares={item.get('shares')}; "
+                f"saves={item.get('saves')}; velocity={item.get('velocity_score')}; "
+                f"engagement_rate={item.get('engagement_rate')}; title={title}; url={item.get('url') or item.get('permalink') or ''}"
+            )
+
+    return "\n".join(lines)
+
+
+# --------------------------------------------------
 # PAGE INTELLIGENCE + CONFIRMED INSTAGRAM LINKS
 # --------------------------------------------------
 PAGE_INTELLIGENCE = {
@@ -587,14 +796,14 @@ def build_page_readiness_notes(page_name: str, page_data: Dict[str, Any], platfo
         f"Platform: {platform}\n"
         f"Instagram status: {get_connected_instagram_status(page_data)}\n"
         f"Same-market pages available in system: {', '.join(same_market_pages)}\n"
-        "Current mode: no live Instagram API access. Do not claim live scraping, live analytics, or real-time account scanning."
+        "Current mode: latest public trend scanning requires TREND_FEED_API_URL or TREND_FEED_JSON. Do not claim broad public Instagram trend scanning unless that feed is connected."
     )
 
 
 # --------------------------------------------------
 # VIRAL INTELLIGENCE / TREND LAYER (NO ACCOUNT ACCESS)
 # --------------------------------------------------
-def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any], platform: str, reference_links: str, live_analytics_summary: str = "") -> str:
+def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any], platform: str, reference_links: str, live_analytics_summary: str = "", latest_trend_summary: str = "") -> str:
     if platform == "Instagram":
         platform_now = [
             "clean premium edits with immediate context",
@@ -643,6 +852,7 @@ def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any],
         f"Likely next {platform} format signals: " + ", ".join(platform_next),
         f"Reference / inspiration links to consider: {links}",
         "Live / connected analytics summary: " + (live_analytics_summary.strip() if live_analytics_summary.strip() else "No live analytics available."),
+        "Latest public trend feed summary: " + (latest_trend_summary.strip() if latest_trend_summary.strip() else "No latest public trend feed available."),
     ]
     return "\n".join(f"- {line}" for line in lines)
 
@@ -686,17 +896,18 @@ def build_master_prompt(
 You are an ELITE real-time viral content generator and Instagram trend intelligence strategist for Koocester.
 
 Your primary job is NOT to write a generic strategy report.
-Your primary job is to generate viral or about-to-go-viral content ideas based on:
+Your primary job is to generate latest viral or about-to-go-viral content ideas based on:
 - the selected Koocester page niche
 - the selected country/market
+- latest public trend feed data when connected
 - Instagram/TikTok short-form content behavior
 - stored page intelligence
 - uploaded analytics or reference links
 - live own-account Instagram analytics when connected
 
 You must think like a viral content desk:
-- what is already going viral in this niche
-- what is starting to spike
+- what is already going viral in this niche within the last 7 days
+- what is starting to spike within the last 14 days
 - what formats are becoming saturated
 - what formats are underused
 - how Koocester should adapt the trend without copying
@@ -744,7 +955,9 @@ Rules:
 - Use Instagram page link, reference links, and uploaded context as direction signals.
 - If live Instagram analytics are connected, use them as own-account performance signals.
 - If live Instagram analytics are not connected, do not claim real-time analytics; clearly say the output is based on stored page intelligence and available references.
-- Do not claim access to all public Instagram trends unless a trend data source or reference links are provided.
+- Do not claim access to all public Instagram trends unless TREND_FEED_API_URL, TREND_FEED_JSON, or uploaded trend data is provided.
+- Recency rules are strict: 0-7 days means viral now, 8-14 days means rising, 15-30 days means pattern validation only, older than 30 days must be ignored unless repeated in recent data.
+- If no latest trend feed is connected, clearly say the system cannot truly scan latest public Instagram viral content yet.
 - Be clear on what would become stronger if broader Instagram trend feeds or competitor analytics are connected.
 - For each idea, explain why this subject/person/place/content type is film-worthy.
 - Distinguish clearly between:
@@ -795,6 +1008,7 @@ Return in this exact structure:
 
 2. ALREADY VIRAL CONTENT FORMATS RIGHT NOW
 Give 7 content formats that are already working for this page niche and market.
+Use only latest trend feed items from the last 7 days if connected. If not connected, clearly label these as inferred, not live-scanned.
 For each:
 - trend / format name
 - why it is currently working
@@ -805,6 +1019,7 @@ For each:
 
 3. ABOUT-TO-GO-VIRAL / RISING CONTENT FORMATS
 Give 7 early or rising formats likely to grow next.
+Use only latest trend feed items from the last 14 days if connected. If not connected, clearly label these as inferred, not live-scanned.
 For each:
 - rising format
 - why it may grow next
@@ -837,12 +1052,16 @@ Rank the best 3.
 Explain why each should be prioritized.
 
 7. ANALYTICS-BASED INSIGHTS
-If live analytics are connected:
+If own-account Instagram analytics are connected:
 - summarize what recent Koocester media signals suggest
 - identify top content patterns
 - identify weak patterns
-If live analytics are not connected:
-- clearly say analytics are unavailable
+If latest public trend feed is connected:
+- identify latest viral items from 0-7 days
+- identify rising items from 8-14 days
+- ignore anything older than 30 days
+If either source is not connected:
+- clearly say what is unavailable
 - state what data must be connected to make this section real
 
 8. PRODUCER EXECUTION PLAN
@@ -1192,15 +1411,55 @@ def generate_cta_v10(goal: str, platform: str, page_name: str, page_data: Dict[s
 
 
 # --------------------------------------------------
+# SETUP GUIDE UI
+# --------------------------------------------------
+def render_setup_guide() -> None:
+    with st.sidebar:
+        st.divider()
+        st.header("Setup Guide")
+
+        with st.expander("Streamlit Secrets Template", expanded=False):
+            st.code(SECRETS_TEMPLATE, language="toml")
+
+        with st.expander("How Instagram Connection Works", expanded=False):
+            st.markdown(
+                """
+Official Meta access can read your own connected professional account media and insights.
+It can help the engine learn what works on Koocester pages.
+
+It does not automatically scan all public viral Instagram content.
+For latest public viral scanning, connect TREND_FEED_API_URL or paste recent TREND_FEED_JSON.
+"""
+            )
+
+        with st.expander("Safety Notes", expanded=False):
+            st.markdown(
+                """
+Low risk:
+- official Meta API
+- read-only insights
+- no auto liking/following/commenting/DM spam
+
+Higher risk:
+- unofficial scraping
+- aggressive automation
+- mass DMs
+- fake engagement tools
+"""
+            )
+
+
+# --------------------------------------------------
 # UI
 # --------------------------------------------------
 st.title("Koocester Viral Content Generator")
 st.caption(
-    "Country-specific viral content ideas based on page niche, Instagram direction, and connected analytics when available."
+    "Latest viral content ideas based on page niche, country, connected analytics, and optional latest public trend feed."
 )
 
 session_id = get_session_id()
 render_admin_login()
+render_setup_guide()
 
 left, right = st.columns([1.15, 0.85], gap="large")
 
@@ -1224,6 +1483,8 @@ with left:
     page_data = get_page_intelligence(page_name)
     live_instagram_data = fetch_instagram_live_analytics(page_data)
     live_analytics_summary = summarize_live_analytics_for_prompt(live_instagram_data)
+    latest_trend_data = fetch_latest_trend_feed(page_data, "Instagram")
+    latest_trend_summary = summarize_latest_trends_for_prompt(latest_trend_data)
 
     if page_data.get("instagram_url"):
         st.caption(f"Instagram source page: {page_data['instagram_url']}")
@@ -1269,6 +1530,16 @@ with left:
         type=None,
         help="Upload scripts, decks, notes, references, or anything useful for generation.",
     )
+
+    manual_trend_json = st.text_area(
+        "Optional Latest Trend Feed JSON",
+        placeholder='Paste recent trend items only. Example: [{"title":"viral format","posted_at":"2026-05-04T10:00:00+00:00","views":100000,"likes":5000,"comments":300,"shares":700,"saves":900,"market":"Singapore","platform":"Instagram"}]',
+        height=90,
+        help="Use this if you do not have TREND_FEED_API_URL yet. Keep content recent: 0-7 days viral now, 8-14 days rising, 15-30 days validation only.",
+    )
+
+    latest_trend_data = fetch_latest_trend_feed(page_data, platform, manual_trend_json=manual_trend_json)
+    latest_trend_summary = summarize_latest_trends_for_prompt(latest_trend_data)
 
     advanced_context = ""
     draft_video_idea = ""
@@ -1324,6 +1595,8 @@ with right:
     st.write(f"**CTA Intent:** {page_data['cta_intent']}")
     st.write(f"**Instagram Status:** {get_connected_instagram_status(page_data)}")
     st.write(f"**Live Analytics:** {'Connected' if live_instagram_data.get('connected') else 'Not connected'}")
+    st.write(f"**Latest Trend Feed:** {'Connected' if latest_trend_data.get('connected') else 'Not connected'}")
+    st.write("**Trend Recency Rules:** 0-7 days viral now, 8-14 days rising, 15-30 days validation only")
 
     uploaded_context, uploaded_files_json, uploaded_count, uploaded_total_bytes = summarize_uploaded_files(uploaded_files)
     st.divider()
@@ -1333,11 +1606,17 @@ with right:
     if uploaded_count:
         st.code(uploaded_context, language="text")
 
-intelligence_summary = build_public_intelligence_summary(page_name, page_data, platform, reference_links, live_analytics_summary)
+intelligence_summary = build_public_intelligence_summary(page_name, page_data, platform, reference_links, live_analytics_summary, latest_trend_summary)
 
 if SHOW_PUBLIC_INTELLIGENCE or is_admin():
     with st.expander("Backend Intelligence Layer", expanded=False):
         st.code(intelligence_summary, language="text")
+
+    with st.expander("Latest Trend Feed Preview", expanded=False):
+        st.code(latest_trend_summary, language="text")
+
+    with st.expander("Instagram Analytics Preview", expanded=False):
+        st.code(live_analytics_summary, language="text")
 
 if SHOW_DEBUG_PROMPTS or is_admin():
     with st.expander("Master Prompt Preview", expanded=False):
