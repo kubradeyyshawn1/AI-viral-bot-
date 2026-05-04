@@ -5,6 +5,9 @@ import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Any
+from urllib.parse import urlencode
+from urllib.request import urlopen, Request
+from urllib.error import URLError, HTTPError
 
 import streamlit as st
 from openai import OpenAI
@@ -229,6 +232,128 @@ def summarize_uploaded_files(uploaded_files) -> Tuple[str, str, int, int]:
 
 
 # --------------------------------------------------
+# OPTIONAL INSTAGRAM ANALYTICS CONNECTOR
+# --------------------------------------------------
+def safe_json_loads(value: str, default: Any) -> Any:
+    try:
+        if not value:
+            return default
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def graph_api_get(path: str, params: Dict[str, Any], access_token: str) -> Dict[str, Any]:
+    base_url = "https://graph.facebook.com/v20.0"
+    query = dict(params or {})
+    query["access_token"] = access_token
+    url = f"{base_url}/{path.lstrip('/')}?{urlencode(query)}"
+    request = Request(url, headers={"User-Agent": "KoocesterViralGenerator/1.0"})
+    with urlopen(request, timeout=20) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def get_instagram_user_id_for_page(page_data: Dict[str, Any]) -> str:
+    mapping_raw = st.secrets.get("IG_USER_ID_MAP_JSON", "") or os.getenv("IG_USER_ID_MAP_JSON", "")
+    mapping = safe_json_loads(mapping_raw, {})
+    return str(mapping.get(page_data.get("internal_key", ""), "")).strip()
+
+
+def fetch_instagram_live_analytics(page_data: Dict[str, Any], limit: int = 12) -> Dict[str, Any]:
+    access_token = st.secrets.get("META_ACCESS_TOKEN", "") or os.getenv("META_ACCESS_TOKEN", "")
+    ig_user_id = get_instagram_user_id_for_page(page_data)
+
+    if not access_token or not ig_user_id:
+        return {
+            "connected": False,
+            "status": "Live Instagram analytics not connected. Add META_ACCESS_TOKEN and IG_USER_ID_MAP_JSON in Streamlit secrets to enable own-account analytics.",
+            "media": [],
+        }
+
+    try:
+        media_response = graph_api_get(
+            f"{ig_user_id}/media",
+            {
+                "fields": "id,caption,media_type,permalink,timestamp,like_count,comments_count",
+                "limit": limit,
+            },
+            access_token,
+        )
+
+        enriched_items = []
+        for item in media_response.get("data", []):
+            media_id = item.get("id")
+            insights = {}
+            if media_id:
+                try:
+                    insight_response = graph_api_get(
+                        f"{media_id}/insights",
+                        {"metric": "reach,saved,shares,total_interactions"},
+                        access_token,
+                    )
+                    for metric in insight_response.get("data", []):
+                        values = metric.get("values", [])
+                        if values:
+                            insights[metric.get("name", "")] = values[0].get("value")
+                except Exception as insight_error:
+                    insights["insight_error"] = str(insight_error)
+
+            enriched = dict(item)
+            enriched["insights"] = insights
+            enriched_items.append(enriched)
+
+        return {
+            "connected": True,
+            "status": "Live own-account Instagram analytics connected through Meta API. This analyzes Koocester account media only, not all public Instagram trends.",
+            "media": enriched_items,
+        }
+    except Exception as error:
+        return {
+            "connected": False,
+            "status": f"Instagram analytics fetch failed: {error}",
+            "media": [],
+        }
+
+
+def summarize_live_analytics_for_prompt(live_data: Dict[str, Any]) -> str:
+    if not live_data.get("connected"):
+        return live_data.get("status", "Live analytics unavailable.")
+
+    media = live_data.get("media", [])
+    if not media:
+        return "Live analytics connected, but no recent media data returned."
+
+    scored = []
+    for item in media:
+        insights = item.get("insights", {}) or {}
+        likes = item.get("like_count") or 0
+        comments = item.get("comments_count") or 0
+        saved = insights.get("saved") or 0
+        shares = insights.get("shares") or 0
+        total_interactions = insights.get("total_interactions") or (likes + comments + saved + shares)
+        score = (likes * 1) + (comments * 3) + (saved * 4) + (shares * 5) + (total_interactions * 1)
+        scored.append((score, item))
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    lines = [live_data.get("status", "Live analytics connected.")]
+    lines.append("Top recent Koocester media signals from connected account:")
+    for rank, (score, item) in enumerate(scored[:8], start=1):
+        caption = (item.get("caption") or "").replace("\n", " ").strip()
+        if len(caption) > 180:
+            caption = caption[:180] + "..."
+        insights = item.get("insights", {}) or {}
+        lines.append(
+            f"{rank}. Score={score}; type={item.get('media_type')}; likes={item.get('like_count')}; "
+            f"comments={item.get('comments_count')}; reach={insights.get('reach', 'n/a')}; "
+            f"saved={insights.get('saved', 'n/a')}; shares={insights.get('shares', 'n/a')}; "
+            f"caption={caption}; link={item.get('permalink')}"
+        )
+
+    return "\n".join(lines)
+
+
+# --------------------------------------------------
 # PAGE INTELLIGENCE + CONFIRMED INSTAGRAM LINKS
 # --------------------------------------------------
 PAGE_INTELLIGENCE = {
@@ -443,8 +568,13 @@ def get_market_pages(market: str) -> List[str]:
 
 def get_connected_instagram_status(page_data: Dict[str, Any]) -> str:
     instagram_url = page_data.get("instagram_url", "")
+    access_token = st.secrets.get("META_ACCESS_TOKEN", "") or os.getenv("META_ACCESS_TOKEN", "")
+    ig_user_id = get_instagram_user_id_for_page(page_data)
+
     if not instagram_url:
         return "Instagram page link is not added yet. The engine will rely on stored page intelligence only."
+    if access_token and ig_user_id:
+        return "Instagram page link and live own-account analytics are connected."
     return "Instagram page link is added. Live analytics are not connected yet, so the engine uses stored page intelligence plus the page identity."
 
 
@@ -464,7 +594,7 @@ def build_page_readiness_notes(page_name: str, page_data: Dict[str, Any], platfo
 # --------------------------------------------------
 # VIRAL INTELLIGENCE / TREND LAYER (NO ACCOUNT ACCESS)
 # --------------------------------------------------
-def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any], platform: str, reference_links: str) -> str:
+def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any], platform: str, reference_links: str, live_analytics_summary: str = "") -> str:
     if platform == "Instagram":
         platform_now = [
             "clean premium edits with immediate context",
@@ -512,6 +642,7 @@ def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any],
         f"Current {platform} format signals: " + ", ".join(platform_now),
         f"Likely next {platform} format signals: " + ", ".join(platform_next),
         f"Reference / inspiration links to consider: {links}",
+        "Live / connected analytics summary: " + (live_analytics_summary.strip() if live_analytics_summary.strip() else "No live analytics available."),
     ]
     return "\n".join(f"- {line}" for line in lines)
 
@@ -552,15 +683,25 @@ def build_master_prompt(
     )
 
     return f"""
-You are an ELITE market-specific producer intelligence strategist, viral content strategist, retention expert, storyboard architect, platform analyst, and conversion-focused strategist for Koocester.
+You are an ELITE real-time viral content generator and Instagram trend intelligence strategist for Koocester.
 
-You are NOT a generic marketing form generator.
-You must think like a real producer deciding:
-- what should be filmed
-- who should be interviewed
-- why this person/place/home/car/business/wealth story is worth watching
-- what makes the content viral or not
-- how to make the same Instagram page direction stronger
+Your primary job is NOT to write a generic strategy report.
+Your primary job is to generate viral or about-to-go-viral content ideas based on:
+- the selected Koocester page niche
+- the selected country/market
+- Instagram/TikTok short-form content behavior
+- stored page intelligence
+- uploaded analytics or reference links
+- live own-account Instagram analytics when connected
+
+You must think like a viral content desk:
+- what is already going viral in this niche
+- what is starting to spike
+- what formats are becoming saturated
+- what formats are underused
+- how Koocester should adapt the trend without copying
+- what should be filmed next
+- what hook, structure, caption, and CTA should be used
 
 ==================================================
 SYSTEM MODE
@@ -601,8 +742,10 @@ Rules:
 - Stay aligned with the selected Instagram page identity and content direction.
 - Improve the page's current content path; do not replace it with random unrelated ideas.
 - Use Instagram page link, reference links, and uploaded context as direction signals.
-- Do not claim you accessed live Instagram analytics. This is a no-access/public-intelligence mode.
-- Be clear on what would become stronger if Instagram API/insights were connected.
+- If live Instagram analytics are connected, use them as own-account performance signals.
+- If live Instagram analytics are not connected, do not claim real-time analytics; clearly say the output is based on stored page intelligence and available references.
+- Do not claim access to all public Instagram trends unless a trend data source or reference links are provided.
+- Be clear on what would become stronger if broader Instagram trend feeds or competitor analytics are connected.
 - For each idea, explain why this subject/person/place/content type is film-worthy.
 - Distinguish clearly between:
   1. Viral Now
@@ -644,122 +787,85 @@ OUTPUT FORMAT
 
 Return in this exact structure:
 
-1. PRODUCER STRATEGY SUMMARY
-- what page this is for
-- what Instagram page direction the content must follow
-- what success looks like
-- what the AI inferred as the main creative risk
-- what must be filmed or found to make this content work
+1. DATA SOURCE STATUS
+- say whether live own-account Instagram analytics are connected
+- say whether broad public Instagram trend analytics are connected or not
+- never fake analytics
+- identify what the recommendation is based on
 
-2. VIRAL NOW ({market} + SELECTED PLATFORM)
-- 5 strong current content directions
-- why they are working now
-- how Koocester can use them without copying
+2. ALREADY VIRAL CONTENT FORMATS RIGHT NOW
+Give 7 content formats that are already working for this page niche and market.
+For each:
+- trend / format name
+- why it is currently working
+- visible signal or inferred signal
+- Koocester adaptation
+- content benefit for this page
+- lead or engagement benefit
 
-3. LIKELY TO GO VIRAL NEXT
-- 5 rising content directions
-- why these are rising
-- what signal suggests they may grow next
+3. ABOUT-TO-GO-VIRAL / RISING CONTENT FORMATS
+Give 7 early or rising formats likely to grow next.
+For each:
+- rising format
+- why it may grow next
+- what makes it not yet saturated
+- Koocester version
+- best first hook
+- risk level
 
-4. WHO / WHAT SHOULD WE FILM?
-- rank the best subject/person/place/content type to film
-- explain why each one could go viral
-- explain what would make each one fail
-- include interview-worthiness or tour-worthiness where relevant
+4. DO NOT USE / SATURATED CONTENT
+List 5 formats that are likely weak, overused, or low-retention for this page.
+Explain why.
 
-5. SAME-NICHE COMPETITOR OPPORTUNITIES
-- what similar niche pages are doing well conceptually
-- what Koocester can do in the same direction but better
-- what gap Koocester can fill
-
-6. 7 BEST VIDEO IDEAS FOR THIS PAGE
+5. BEST 10 VIRAL VIDEO IDEAS TO MAKE NEXT
 For each idea include:
-- Hook
-- Type
-- Concept
-- Video Format
-- Why This Would Go Viral
-- Why This Fits The Instagram Page
-- Viewer Expectation
-- Content Requirement
-- Lead Intent
-- Film-Worthy Reason
+- title
+- viral hook
+- trend source category: already viral / rising / experimental
+- exact Koocester version
+- why this fits the selected page
+- why this fits the selected country
+- what to film
+- opening 2 seconds
+- caption angle
+- CTA angle
+- predicted viral potential score
+- predicted lead potential score
 
-7. BEST IDEA
-- explain in depth why this is strongest for this page, this platform, this market, and this role mode
+6. TOP 3 IDEAS TO SHOOT FIRST
+Rank the best 3.
+Explain why each should be prioritized.
 
-8. RETENTION ENGINE
-- Hook
-- Pattern Interrupt
-- Open Loop
-- Payoff
-- CTA Placement
-- Content Expectation
-- Retention Risk
+7. ANALYTICS-BASED INSIGHTS
+If live analytics are connected:
+- summarize what recent Koocester media signals suggest
+- identify top content patterns
+- identify weak patterns
+If live analytics are not connected:
+- clearly say analytics are unavailable
+- state what data must be connected to make this section real
 
-9. FULL STORYBOARD
-For each scene include:
-- Scene Objective
-- Visual
-- Shot Type
-- Movement
-- Hook / Retention Trigger
-- Audio / Dialogue
-- On-Screen Text
-- Transition Logic
-- Why This Scene Matters
-
-10. ROLE-SPECIFIC OUTPUT
-If role = Producer:
-- what footage is needed
-- who/what should be on camera
-- what energy is needed
-- what questions should be asked
-- what to avoid while filming
-- what makes this subject/person/place worth filming
-
-If role = Copywriter:
-- best hook rewrites
-- best caption structure
-- best CTA language
-- on-screen text suggestions
-- wording upgrades
-
-11. VIDEO SCRIPT WITH DIALOGUE
-- Opening Line
-- Host Dialogue
-- Supporting Dialogue / Narration
-- Scene-by-Scene Script
-- On-Screen Text
-- Closing CTA Dialogue
-
-12. VIRALITY + LEAD ESTIMATE
-- Viral Potential Score (0-100)
-- Hook Strength Score
-- Retention Strength Score
-- Save/Share Potential
-- DM/Lead Potential
-- Realistic Performance Expectation
-- Why it may underperform
-- What needs to improve
-
-13. CAPTION SUGGESTIONS
-- Caption Option 1
-- Caption Option 2
-- Caption Option 3
-- Which is strongest and why
-
-14. PRODUCER EXECUTION CHECKLIST
+8. PRODUCER EXECUTION PLAN
 - must-have footage
 - must-have first 2 seconds
 - must-have on-screen text
-- must-have emotional or curiosity trigger
+- must-have emotion or curiosity trigger
+- editing style
 - what to avoid
 - what the editor must emphasize
 
-15. FINAL CTA
-- Use this CTA unless the producer changes the objective:
+9. COPYWRITER OUTPUT
+- 10 hooks
+- 3 captions
+- 5 on-screen text lines
+- 3 CTA variations
+- strongest final CTA:
 {auto_cta}
+
+10. FINAL RECOMMENDATION
+- one idea to shoot first today
+- why this has the highest upside
+- what data would make the prediction more accurate
 """.strip()
 
 
@@ -1088,9 +1194,9 @@ def generate_cta_v10(goal: str, platform: str, page_name: str, page_data: Dict[s
 # --------------------------------------------------
 # UI
 # --------------------------------------------------
-st.title("Koocester Producer Intelligence Engine")
+st.title("Koocester Viral Content Generator")
 st.caption(
-    "Country-specific, Instagram-page-aware producer intelligence. Same content path, stronger execution."
+    "Country-specific viral content ideas based on page niche, Instagram direction, and connected analytics when available."
 )
 
 session_id = get_session_id()
@@ -1099,7 +1205,7 @@ render_admin_login()
 left, right = st.columns([1.15, 0.85], gap="large")
 
 with left:
-    st.subheader("Create Viral Content Direction")
+    st.subheader("Generate Viral Content Ideas")
 
     page_name = st.selectbox(
         "Koocester Instagram Page",
@@ -1116,6 +1222,8 @@ with left:
         ],
     )
     page_data = get_page_intelligence(page_name)
+    live_instagram_data = fetch_instagram_live_analytics(page_data)
+    live_analytics_summary = summarize_live_analytics_for_prompt(live_instagram_data)
 
     if page_data.get("instagram_url"):
         st.caption(f"Instagram source page: {page_data['instagram_url']}")
@@ -1198,7 +1306,7 @@ with left:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        generate = st.button("Build Viral Direction", use_container_width=True)
+        generate = st.button("Generate Viral Ideas", use_container_width=True)
     with c2:
         review_draft_btn = st.button("Rate Draft", use_container_width=True, disabled=not is_admin())
     with c3:
@@ -1215,6 +1323,7 @@ with right:
     st.write(f"**Tone:** {tone}")
     st.write(f"**CTA Intent:** {page_data['cta_intent']}")
     st.write(f"**Instagram Status:** {get_connected_instagram_status(page_data)}")
+    st.write(f"**Live Analytics:** {'Connected' if live_instagram_data.get('connected') else 'Not connected'}")
 
     uploaded_context, uploaded_files_json, uploaded_count, uploaded_total_bytes = summarize_uploaded_files(uploaded_files)
     st.divider()
@@ -1224,7 +1333,7 @@ with right:
     if uploaded_count:
         st.code(uploaded_context, language="text")
 
-intelligence_summary = build_public_intelligence_summary(page_name, page_data, platform, reference_links)
+intelligence_summary = build_public_intelligence_summary(page_name, page_data, platform, reference_links, live_analytics_summary)
 
 if SHOW_PUBLIC_INTELLIGENCE or is_admin():
     with st.expander("Backend Intelligence Layer", expanded=False):
@@ -1261,7 +1370,7 @@ if generate:
     user_agent = get_user_agent()
 
     try:
-        with st.spinner("Building Instagram-page-aware viral direction..."):
+        with st.spinner("Generating viral and rising content ideas..."):
             output = generate_strategy(
                 page_name=page_name,
                 page_data=page_data,
@@ -1312,7 +1421,7 @@ if generate:
         )
 
         st.divider()
-        st.subheader("Generated Viral Direction")
+        st.subheader("Generated Viral Content Ideas")
         st.markdown(output)
 
         cta_options, best_cta, reasoning = generate_cta_v10(
