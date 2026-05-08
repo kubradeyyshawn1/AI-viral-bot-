@@ -54,6 +54,12 @@ TREND_FEED_API_URL = ""
 # Optional manual trend feed JSON fallback.
 # Keep only recent items. posted_at must be ISO format.
 TREND_FEED_JSON = "[]"
+
+# Optional Apify Instagram trend scanner.
+APIFY_API_TOKEN = ""
+APIFY_INSTAGRAM_ACTOR = "apify/instagram-reel-scraper"
+APIFY_RESULTS_LIMIT = "60"
+APIFY_INPUT_FIELD = "directUrls"
 """
 
 
@@ -444,7 +450,7 @@ def normalize_trend_item(item: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
-def fetch_latest_trend_feed(page_data: Dict[str, Any], platform: str, limit: int = 40, manual_trend_json: str = "") -> Dict[str, Any]:
+def fetch_latest_trend_feed(page_data: Dict[str, Any], platform: str, limit: int = 40, manual_trend_json: str = "", run_live_scraper: bool = False) -> Dict[str, Any]:
     """
     Optional external trend feed.
 
@@ -463,6 +469,13 @@ def fetch_latest_trend_feed(page_data: Dict[str, Any], platform: str, limit: int
     feed_json = manual_trend_json.strip() or st.secrets.get("TREND_FEED_JSON", "") or os.getenv("TREND_FEED_JSON", "")
 
     raw_items: List[Dict[str, Any]] = []
+
+    if run_live_scraper:
+        apify_data = fetch_apify_instagram_trends(page_data, platform, limit=limit)
+        if apify_data.get("connected") and apify_data.get("items"):
+            return apify_data
+        if not feed_url and not feed_json:
+            return apify_data
 
     if feed_url:
         try:
@@ -490,7 +503,7 @@ def fetch_latest_trend_feed(page_data: Dict[str, Any], platform: str, limit: int
     if not raw_items:
         return {
             "connected": False,
-            "status": "Latest public trend feed is not connected. Add TREND_FEED_API_URL or TREND_FEED_JSON for real latest viral scanning.",
+            "status": "No live SG/MY Instagram viral scanner connected yet. The engine cannot truly detect what is currently exploding on Instagram until a real trend feed provider is connected. Add TREND_FEED_API_URL, TREND_FEED_JSON, or manual latest trend JSON.",
             "items": [],
         }
 
@@ -518,6 +531,147 @@ def fetch_latest_trend_feed(page_data: Dict[str, Any], platform: str, limit: int
         "status": "Latest trend feed connected. Recency filter active: 0-7 days viral now, 8-14 days rising, 15-30 days validation only.",
         "items": filtered_items[:limit],
     }
+
+
+
+
+def apify_actor_id_for_url(actor: str) -> str:
+    return actor.strip().replace("/", "~")
+
+
+def build_apify_scrape_urls(page_data: Dict[str, Any]) -> List[str]:
+    urls: List[str] = []
+
+    for username in get_tracked_pages_for_page(page_data):
+        clean = username.strip().lstrip("@")
+        if clean:
+            urls.append(f"https://www.instagram.com/{clean}/reels/")
+
+    for hashtag in get_tracked_hashtags_for_page(page_data):
+        clean_tag = hashtag.strip().lstrip("#")
+        if clean_tag:
+            urls.append(f"https://www.instagram.com/explore/tags/{clean_tag}/")
+
+    return urls
+
+
+def normalize_apify_item(item: Dict[str, Any], page_data: Dict[str, Any], platform: str) -> Dict[str, Any]:
+    owner = (
+        item.get("ownerUsername")
+        or item.get("username")
+        or item.get("owner")
+        or item.get("account")
+        or item.get("profileName")
+        or ""
+    )
+
+    shortcode = item.get("shortCode") or item.get("shortcode") or item.get("code") or ""
+    url = (
+        item.get("url")
+        or item.get("permalink")
+        or item.get("inputUrl")
+        or (f"https://www.instagram.com/reel/{shortcode}/" if shortcode else "")
+    )
+
+    caption = item.get("caption") or item.get("text") or item.get("title") or ""
+    timestamp = (
+        item.get("timestamp")
+        or item.get("takenAt")
+        or item.get("taken_at")
+        or item.get("postedAt")
+        or item.get("date")
+        or ""
+    )
+
+    return {
+        "title": caption[:120] if caption else f"Instagram reel from @{owner}",
+        "caption": caption,
+        "posted_at": timestamp,
+        "views": item.get("videoViewCount") or item.get("videoPlayCount") or item.get("playCount") or item.get("views") or item.get("viewCount") or 0,
+        "likes": item.get("likesCount") or item.get("likes") or item.get("likeCount") or 0,
+        "comments": item.get("commentsCount") or item.get("comments") or item.get("commentCount") or 0,
+        "shares": item.get("sharesCount") or item.get("shares") or item.get("shareCount") or 0,
+        "saves": item.get("savesCount") or item.get("saves") or item.get("saveCount") or 0,
+        "market": page_data.get("market", ""),
+        "platform": platform,
+        "account": owner,
+        "source": "apify_instagram_scraper",
+        "url": url,
+        "niche": page_data.get("internal_key", ""),
+    }
+
+
+def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit: int = 40) -> Dict[str, Any]:
+    token = st.secrets.get("APIFY_API_TOKEN", "") or os.getenv("APIFY_API_TOKEN", "")
+    actor = st.secrets.get("APIFY_INSTAGRAM_ACTOR", "") or os.getenv("APIFY_INSTAGRAM_ACTOR", "apify/instagram-reel-scraper")
+    input_field = st.secrets.get("APIFY_INPUT_FIELD", "") or os.getenv("APIFY_INPUT_FIELD", "directUrls")
+
+    try:
+        results_limit = int(st.secrets.get("APIFY_RESULTS_LIMIT", "") or os.getenv("APIFY_RESULTS_LIMIT", str(limit)))
+    except Exception:
+        results_limit = limit
+
+    if not token:
+        return {
+            "connected": False,
+            "status": "Apify trend scanner not connected. Add APIFY_API_TOKEN in Streamlit secrets.",
+            "items": [],
+        }
+
+    urls = build_apify_scrape_urls(page_data)
+    if not urls:
+        return {
+            "connected": False,
+            "status": "No tracked Instagram pages or hashtags are mapped for this selected Koocester page.",
+            "items": [],
+        }
+
+    actor_id = apify_actor_id_for_url(actor)
+    endpoint = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items?token={token}"
+
+    if input_field == "startUrls":
+        actor_input = {"startUrls": [{"url": url} for url in urls], "resultsLimit": results_limit, "resultsType": "posts"}
+    elif input_field == "urls":
+        actor_input = {"urls": urls, "resultsLimit": results_limit, "resultsType": "posts"}
+    else:
+        actor_input = {"directUrls": urls, "resultsLimit": results_limit, "resultsType": "posts"}
+
+    try:
+        request = Request(
+            endpoint,
+            data=json.dumps(actor_input).encode("utf-8"),
+            headers={"Content-Type": "application/json", "User-Agent": "KoocesterApifyTrendScanner/1.0"},
+            method="POST",
+        )
+
+        with urlopen(request, timeout=120) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        if isinstance(payload, dict):
+            raw_items = payload.get("items") or payload.get("data") or []
+        elif isinstance(payload, list):
+            raw_items = payload
+        else:
+            raw_items = []
+
+        normalized = [normalize_apify_item(item, page_data, platform) for item in raw_items if isinstance(item, dict)]
+        normalized = [normalize_trend_item(item) for item in normalized]
+
+        return {
+            "connected": True,
+            "status": f"Live Apify Instagram scraper connected. Scanned {len(urls)} niche sources for {page_data.get('market')} / {page_data.get('internal_key')}.",
+            "items": normalized[:results_limit],
+            "tracked_pages": get_tracked_pages_for_page(page_data),
+            "tracked_hashtags": get_tracked_hashtags_for_page(page_data),
+        }
+    except Exception as error:
+        return {
+            "connected": False,
+            "status": f"Apify Instagram scraper failed: {error}",
+            "items": [],
+            "tracked_pages": get_tracked_pages_for_page(page_data),
+            "tracked_hashtags": get_tracked_hashtags_for_page(page_data),
+        }
 
 
 def summarize_latest_trends_for_prompt(trend_data: Dict[str, Any]) -> str:
@@ -767,6 +921,77 @@ PAGE_INTELLIGENCE = {
 }
 
 
+
+# --------------------------------------------------
+# TRACKED COMPETITOR / NICHE PAGE MAP
+# --------------------------------------------------
+TRACKED_COMPETITOR_PAGES = {
+    "homes_sg": ["stackedhomes", "propertylimbrothers", "thelocalinnterior", "sgproperty", "singaporeinterior"],
+    "homes_my": ["malaysiaproperty", "interior.my", "klproperty", "malaysiarenovation", "myhome"],
+    "business_sg": ["sgfounders", "startupsg", "businessinsider", "garyvee", "alexhormozi"],
+    "business_my": ["malaysiabusiness", "myfounders", "entrepreneurmy", "smemalaysia"],
+    "autos_sg": ["supercarsingapore", "sgcarmart", "luxurycarsg", "supercarblondie"],
+    "autos_my": ["malaysiaautos", "mycar", "supercarmy", "luxurycarsmy"],
+}
+
+TRACKED_HASHTAGS = {
+    "homes_sg": ["singaporehomes", "singaporeproperty", "sginteriordesign", "sgrenovation", "singaporecondo"],
+    "homes_my": ["malaysiahomes", "malaysiaproperty", "myinteriordesign", "malaysiarenovation", "klproperty"],
+    "business_sg": ["sgbusiness", "singaporebusiness", "sgfounders", "startupsg", "entrepreneursg"],
+    "business_my": ["malaysiabusiness", "malaysiaentrepreneur", "smemalaysia", "startupmalaysia", "usahawanmalaysia"],
+    "autos_sg": ["sgcars", "singaporecars", "sgcarmart", "supercarsingapore", "luxurycarsg"],
+    "autos_my": ["malaysiacars", "keretamalaysia", "supercarmy", "luxurycarsmy", "automalaysia"],
+}
+
+
+def get_niche_bucket_for_page(page_data: Dict[str, Any]) -> str:
+    key = page_data.get("internal_key", "")
+    if key == "homes":
+        return "homes_sg"
+    if key == "homes_my":
+        return "homes_my"
+    if key == "business":
+        return "business_sg"
+    if key == "business_my":
+        return "business_my"
+    if key == "autos":
+        return "autos_sg"
+    if key == "autos_my":
+        return "autos_my"
+    if page_data.get("market", "").lower() == "malaysia":
+        return "business_my"
+    return "business_sg"
+
+
+def get_tracked_hashtags_for_page(page_data: Dict[str, Any]) -> List[str]:
+    return TRACKED_HASHTAGS.get(get_niche_bucket_for_page(page_data), [])
+
+
+
+def get_tracked_pages_for_page(page_data: Dict[str, Any]) -> List[str]:
+    key = page_data.get("internal_key", "")
+    market = page_data.get("market", "").lower()
+
+    if key == "homes":
+        return TRACKED_COMPETITOR_PAGES.get("homes_sg", [])
+    if key == "homes_my":
+        return TRACKED_COMPETITOR_PAGES.get("homes_my", [])
+    if key == "business":
+        return TRACKED_COMPETITOR_PAGES.get("business_sg", [])
+    if key == "business_my":
+        return TRACKED_COMPETITOR_PAGES.get("business_my", [])
+    if key == "autos":
+        return TRACKED_COMPETITOR_PAGES.get("autos_sg", [])
+    if key == "autos_my":
+        return TRACKED_COMPETITOR_PAGES.get("autos_my", [])
+
+    if market == "singapore":
+        return TRACKED_COMPETITOR_PAGES.get("homes_sg", []) + TRACKED_COMPETITOR_PAGES.get("business_sg", []) + TRACKED_COMPETITOR_PAGES.get("autos_sg", [])
+    if market == "malaysia":
+        return TRACKED_COMPETITOR_PAGES.get("homes_my", []) + TRACKED_COMPETITOR_PAGES.get("business_my", []) + TRACKED_COMPETITOR_PAGES.get("autos_my", [])
+    return []
+
+
 def get_page_intelligence(page_name: str) -> Dict[str, Any]:
     return PAGE_INTELLIGENCE[page_name]
 
@@ -834,8 +1059,11 @@ def build_public_intelligence_summary(page_name: str, page_data: Dict[str, Any],
     ig_url = page_data.get("instagram_url") or "No confirmed Instagram link provided yet."
     links = reference_links.strip() if reference_links.strip() else "No extra links provided by producer."
     readiness_notes = build_page_readiness_notes(page_name, page_data, platform)
+    tracked_pages = get_tracked_pages_for_page(page_data)
 
     lines = [
+        "Tracked competitor / niche pages to monitor: " + (", ".join(tracked_pages) if tracked_pages else "No tracked pages mapped for this page yet."),
+        "Trend priority rule: actual latest trend feed data is primary; stored intelligence is secondary only.",
         "System readiness notes: " + readiness_notes.replace("\n", " | "),
         f"Market focus: {page_data.get('market', 'Singapore')} only.",
         f"Selected Instagram page identity: {page_name} - {ig_url}",
@@ -957,7 +1185,10 @@ Rules:
 - If live Instagram analytics are not connected, do not claim real-time analytics; clearly say the output is based on stored page intelligence and available references.
 - Do not claim access to all public Instagram trends unless TREND_FEED_API_URL, TREND_FEED_JSON, or uploaded trend data is provided.
 - Recency rules are strict: 0-7 days means viral now, 8-14 days means rising, 15-30 days means pattern validation only, older than 30 days must be ignored unless repeated in recent data.
-- If no latest trend feed is connected, clearly say the system cannot truly scan latest public Instagram viral content yet.
+- If no latest trend feed is connected, DO NOT generate fake or inferred viral-now Instagram content.
+- Instead clearly say: "No live SG/MY Instagram trend feed connected yet."
+- Only generate real viral-now or rising Instagram content when actual trend data exists.
+- If no trend feed exists, you may provide setup guidance and describe what data is missing, but do not pretend assumptions are real viral content.
 - Be clear on what would become stronger if broader Instagram trend feeds or competitor analytics are connected.
 - For each idea, explain why this subject/person/place/content type is film-worthy.
 - Distinguish clearly between:
@@ -1006,22 +1237,30 @@ Return in this exact structure:
 - never fake analytics
 - identify what the recommendation is based on
 
-2. ALREADY VIRAL CONTENT FORMATS RIGHT NOW
-Give 7 content formats that are already working for this page niche and market.
-Use only latest trend feed items from the last 7 days if connected. If not connected, clearly label these as inferred, not live-scanned.
-For each:
-- trend / format name
-- why it is currently working
-- visible signal or inferred signal
-- Koocester adaptation
+2. REAL VIRAL INSTAGRAM CONTENT RIGHT NOW
+Use only actual latest trend feed items from the last 7 days.
+If no real latest trend feed is connected, do not invent examples. Say "No live SG/MY Instagram trend feed connected yet."
+For each real item include:
+- real reel/post title
+- actual Instagram page or source
+- actual reel/post link
+- posted recency
+- views/engagement if available
+- why it is going viral
+- why this matters for Koocester
+- what should be adapted
 - content benefit for this page
 - lead or engagement benefit
 
-3. ABOUT-TO-GO-VIRAL / RISING CONTENT FORMATS
-Give 7 early or rising formats likely to grow next.
-Use only latest trend feed items from the last 14 days if connected. If not connected, clearly label these as inferred, not live-scanned.
-For each:
-- rising format
+3. ABOUT-TO-GO-VIRAL / RISING INSTAGRAM CONTENT
+Use only actual latest trend feed items from the last 8-14 days.
+If no real latest trend feed is connected, do not invent examples. Say what source must be connected.
+For each real item include:
+- real reel/post title
+- actual Instagram page or source
+- actual reel/post link
+- posted recency
+- engagement velocity if available
 - why it may grow next
 - what makes it not yet saturated
 - Koocester version
@@ -1428,7 +1667,7 @@ Official Meta access can read your own connected professional account media and 
 It can help the engine learn what works on Koocester pages.
 
 It does not automatically scan all public viral Instagram content.
-For latest public viral scanning, connect TREND_FEED_API_URL or paste recent TREND_FEED_JSON.
+For latest public viral scanning, connect APIFY_API_TOKEN and use the live scraper checkbox, or connect TREND_FEED_API_URL / paste TREND_FEED_JSON.
 """
             )
 
@@ -1483,8 +1722,8 @@ with left:
     page_data = get_page_intelligence(page_name)
     live_instagram_data = fetch_instagram_live_analytics(page_data)
     live_analytics_summary = summarize_live_analytics_for_prompt(live_instagram_data)
-    latest_trend_data = fetch_latest_trend_feed(page_data, "Instagram")
-    latest_trend_summary = summarize_latest_trends_for_prompt(latest_trend_data)
+    latest_trend_data = {"connected": False, "status": "Trend feed not loaded yet.", "items": []}
+    latest_trend_summary = "Trend feed not loaded yet."
 
     if page_data.get("instagram_url"):
         st.caption(f"Instagram source page: {page_data['instagram_url']}")
@@ -1538,7 +1777,18 @@ with left:
         help="Use this if you do not have TREND_FEED_API_URL yet. Keep content recent: 0-7 days viral now, 8-14 days rising, 15-30 days validation only.",
     )
 
-    latest_trend_data = fetch_latest_trend_feed(page_data, platform, manual_trend_json=manual_trend_json)
+    run_live_scraper = st.checkbox(
+        "Run live Instagram niche scraper using Apify",
+        value=False,
+        help="Uses APIFY_API_TOKEN and tracked Koocester-like pages/hashtags. This may use Apify credits.",
+    )
+
+    latest_trend_data = fetch_latest_trend_feed(
+        page_data,
+        platform,
+        manual_trend_json=manual_trend_json,
+        run_live_scraper=run_live_scraper,
+    )
     latest_trend_summary = summarize_latest_trends_for_prompt(latest_trend_data)
 
     advanced_context = ""
@@ -1597,6 +1847,9 @@ with right:
     st.write(f"**Live Analytics:** {'Connected' if live_instagram_data.get('connected') else 'Not connected'}")
     st.write(f"**Latest Trend Feed:** {'Connected' if latest_trend_data.get('connected') else 'Not connected'}")
     st.write("**Trend Recency Rules:** 0-7 days viral now, 8-14 days rising, 15-30 days validation only")
+    with st.expander("Tracked niche sources", expanded=False):
+        st.write("**Pages:** " + (", ".join(get_tracked_pages_for_page(page_data)) or "None"))
+        st.write("**Hashtags:** " + (", ".join("#" + tag for tag in get_tracked_hashtags_for_page(page_data)) or "None"))
 
     uploaded_context, uploaded_files_json, uploaded_count, uploaded_total_bytes = summarize_uploaded_files(uploaded_files)
     st.divider()
