@@ -716,6 +716,143 @@ def summarize_latest_trends_for_prompt(trend_data: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+
+
+# --------------------------------------------------
+# REAL VIRAL INSTAGRAM SCAN OUTPUT
+# --------------------------------------------------
+def koocester_fit_reason(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
+    market = page_data.get("market", "")
+    niche = page_data.get("internal_key", "")
+    caption = (item.get("caption") or item.get("title") or "").lower()
+
+    reason_parts = []
+    if niche in ["autos", "autos_my"]:
+        reason_parts.append("Matches Koocester Autos because it sits in premium car / ownership / buyer-interest content.")
+    elif niche in ["homes", "homes_my"]:
+        reason_parts.append("Matches Koocester Homes because it sits in renovation, property, home tour, layout, or homeowner-interest content.")
+    elif niche in ["business", "business_my"]:
+        reason_parts.append("Matches Koocester Business because it sits in founder, SME, networking, operator, or business-growth content.")
+    else:
+        reason_parts.append("Matches Koocester Main because it sits in premium lifestyle, event, founder, discovery, or social-proof content.")
+
+    reason_parts.append(f"It is mapped to the {market} market / selected page niche scan.")
+
+    if any(word in caption for word in ["mistake", "regret", "truth", "secret", "hidden", "before", "why"]):
+        reason_parts.append("The hook/caption uses tension or curiosity, which is useful for short-form retention.")
+    if item.get("views", 0):
+        reason_parts.append("It has available view data, so it can be ranked by performance instead of guessed manually.")
+
+    return " ".join(reason_parts)
+
+
+def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data: Dict[str, Any]) -> None:
+    st.divider()
+    st.subheader("Live Viral Instagram Scan")
+
+    items = trend_data.get("items", []) or []
+    tracked_pages = trend_data.get("tracked_pages", []) or get_tracked_pages_for_page(page_data)
+    tracked_hashtags = trend_data.get("tracked_hashtags", []) or get_tracked_hashtags_for_page(page_data)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Scanner", "Connected" if trend_data.get("connected") else "Not connected")
+    c2.metric("Items Found", len(items))
+    c3.metric("Country", page_data.get("market", "-"))
+    c4.metric("Niche", page_data.get("internal_key", "-"))
+
+    st.write(f"**Selected Koocester page:** {page_name}")
+    st.write(f"**Scanner status:** {trend_data.get('status', 'No status returned')}")
+
+    with st.expander("Tracked niche sources used for this scan", expanded=False):
+        st.write("**Tracked Instagram pages:**")
+        st.write(", ".join(["@" + p for p in tracked_pages]) if tracked_pages else "No tracked pages mapped.")
+        st.write("**Tracked hashtags:**")
+        st.write(", ".join(["#" + h for h in tracked_hashtags]) if tracked_hashtags else "No tracked hashtags mapped.")
+
+    if not trend_data.get("connected") or not items:
+        st.error("No real Instagram viral content was scraped. Add/check APIFY_API_TOKEN in Streamlit Secrets and confirm the Apify actor/input settings are correct.")
+        st.stop()
+
+    # Highest-quality ranking first: newest + high velocity + high views.
+    items = sorted(
+        items,
+        key=lambda x: (
+            x.get("recency_bucket") != "viral_now_candidate",
+            -(x.get("velocity_score") or 0),
+            -(x.get("views") or 0),
+            -(x.get("likes") or 0),
+        ),
+    )
+
+    viral_now = [i for i in items if i.get("recency_bucket") == "viral_now_candidate"]
+    rising = [i for i in items if i.get("recency_bucket") == "rising_candidate"]
+    validation = [i for i in items if i.get("recency_bucket") == "pattern_validation_only"]
+
+    def render_table(title: str, data: List[Dict[str, Any]]) -> None:
+        st.markdown(f"### {title}")
+        if not data:
+            st.info("No matching real scraped items in this bucket.")
+            return
+
+        table_rows = []
+        for item in data[:25]:
+            caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
+            if len(caption) > 130:
+                caption = caption[:130] + "..."
+            table_rows.append(
+                {
+                    "Account": "@" + str(item.get("account") or "unknown"),
+                    "Views": item.get("views", 0),
+                    "Likes": item.get("likes", 0),
+                    "Comments": item.get("comments", 0),
+                    "Shares": item.get("shares", 0),
+                    "Saves": item.get("saves", 0),
+                    "Age Days": item.get("age_days"),
+                    "Velocity": item.get("velocity_score", 0),
+                    "Engagement Rate": item.get("engagement_rate", 0),
+                    "Caption / Topic": caption,
+                    "Link": item.get("url") or item.get("permalink") or "",
+                }
+            )
+        st.dataframe(table_rows, use_container_width=True)
+
+        for index, item in enumerate(data[:15], start=1):
+            account = item.get("account") or "unknown"
+            url = item.get("url") or item.get("permalink") or ""
+            caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
+            if len(caption) > 280:
+                caption = caption[:280] + "..."
+
+            with st.expander(f"{index}. @{account} | {item.get('views', 0)} views | {item.get('age_days')} days old"):
+                st.write(f"**Instagram link:** {url}")
+                st.write(f"**Caption/topic:** {caption if caption else 'No caption returned by scraper.'}")
+                st.write(f"**Views:** {item.get('views', 0)}")
+                st.write(f"**Likes:** {item.get('likes', 0)}")
+                st.write(f"**Comments:** {item.get('comments', 0)}")
+                st.write(f"**Shares:** {item.get('shares', 0)}")
+                st.write(f"**Saves:** {item.get('saves', 0)}")
+                st.write(f"**Velocity score:** {item.get('velocity_score', 0)}")
+                st.write(f"**Engagement rate:** {item.get('engagement_rate', 0)}")
+                st.write(f"**Why this fits Koocester:** {koocester_fit_reason(item, page_data)}")
+
+    render_table("Real Viral Now: scraped Instagram content from 0-7 days", viral_now)
+    render_table("Real Rising / About-To-Go-Viral: scraped Instagram content from 8-14 days", rising)
+    render_table("Pattern Validation: scraped Instagram content from 15-30 days", validation)
+
+    st.divider()
+    st.subheader("Best Matches for Koocester")
+    best_matches = items[:10]
+    if not best_matches:
+        st.info("No best matches available.")
+    else:
+        for idx, item in enumerate(best_matches, start=1):
+            account = item.get("account") or "unknown"
+            url = item.get("url") or item.get("permalink") or ""
+            st.markdown(f"**{idx}. @{account}** — {item.get('views', 0)} views | {item.get('likes', 0)} likes | {item.get('comments', 0)} comments")
+            st.write(url)
+            st.caption(koocester_fit_reason(item, page_data))
+
+
 # --------------------------------------------------
 # PAGE INTELLIGENCE + CONFIRMED INSTAGRAM LINKS
 # --------------------------------------------------
@@ -1777,11 +1914,9 @@ with left:
         help="Use this if you do not have TREND_FEED_API_URL yet. Keep content recent: 0-7 days viral now, 8-14 days rising, 15-30 days validation only.",
     )
 
-    run_live_scraper = st.checkbox(
-        "Run live Instagram niche scraper using Apify",
-        value=False,
-        help="Uses APIFY_API_TOKEN and tracked Koocester-like pages/hashtags. This may use Apify credits.",
-    )
+    # Always run the real Instagram scraper first.
+    # This app is now a live viral content scanner, not an assumptions-first idea generator.
+    run_live_scraper = True
 
     latest_trend_data = fetch_latest_trend_feed(
         page_data,
@@ -1827,7 +1962,7 @@ with left:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        generate = st.button("Generate Viral Ideas", use_container_width=True)
+        generate = st.button("Scan Viral Instagram Content", use_container_width=True)
     with c2:
         review_draft_btn = st.button("Rate Draft", use_container_width=True, disabled=not is_admin())
     with c3:
@@ -1895,32 +2030,19 @@ if SHOW_DEBUG_PROMPTS or is_admin():
 
 
 # --------------------------------------------------
-# GENERATE MAIN STRATEGY
+# SCAN REAL INSTAGRAM CONTENT FIRST
 # --------------------------------------------------
 if generate:
     ip_value, ip_source = get_ip_if_available()
     user_agent = get_user_agent()
 
     try:
-        with st.spinner("Generating viral and rising content ideas..."):
-            output = generate_strategy(
-                page_name=page_name,
-                page_data=page_data,
-                platform=platform,
-                market=market,
-                role_mode=role_mode,
-                auto_cta=auto_cta,
-                goal=goal,
-                video_length=video_length,
-                tone=tone,
-                uploaded_context=uploaded_context,
-                scenario=scenario,
-                success_looks_like=success_looks_like,
-                filming_subject=filming_subject,
-                reference_links=reference_links,
-                advanced_context=advanced_context,
-                intelligence_summary=intelligence_summary,
-                model=DEFAULT_MODEL,
+        with st.spinner("Scraping real Instagram niche content from tracked pages and hashtags..."):
+            scanned_trend_data = fetch_latest_trend_feed(
+                page_data,
+                platform,
+                manual_trend_json=manual_trend_json,
+                run_live_scraper=True,
             )
 
         insert_usage_log(
@@ -1934,46 +2056,26 @@ if generate:
                 "niche": page_data["niche_memory"],
                 "audience": page_data["audience"],
                 "lead_type": page_data["lead_type"],
-                "pain_point": "auto_inferred",
+                "pain_point": "real_instagram_scan",
                 "offer": auto_cta,
                 "goal": goal,
                 "video_length": video_length,
                 "tone": tone,
                 "scenario": scenario,
-                "action_type": "generate",
-                "output_chars": len(output or ""),
+                "action_type": "live_instagram_scan",
+                "output_chars": len(json.dumps(scanned_trend_data.get("items", [])[:20], default=str)),
                 "user_agent": user_agent,
                 "uploaded_files_json": uploaded_files_json,
                 "uploaded_total_bytes": uploaded_total_bytes,
                 "uploaded_count": uploaded_count,
                 "ip_value": ip_value,
                 "ip_source": ip_source,
-                "notes": intelligence_summary[:1000],
+                "notes": scanned_trend_data.get("status", "")[:1000],
             }
         )
 
-        st.divider()
-        st.subheader("Generated Viral Content Ideas")
-        st.markdown(output)
-
-        cta_options, best_cta, reasoning = generate_cta_v10(
-            goal=goal,
-            platform=platform,
-            page_name=page_name,
-            page_data=page_data,
-            auto_cta=auto_cta,
-        )
-
-        st.divider()
-        st.subheader("CTA Engine")
-        st.markdown("### CTA Options")
-        for i, cta in enumerate(cta_options, 1):
-            st.write(f"{i}. {cta}")
-
-        st.markdown("### Best CTA")
-        st.success(best_cta)
-        st.markdown("### Why This Works")
-        st.write(reasoning)
+        render_real_viral_scan(scanned_trend_data, page_name, page_data)
+        st.stop()
 
     except Exception as e:
         insert_usage_log(
@@ -1987,13 +2089,13 @@ if generate:
                 "niche": page_data["niche_memory"],
                 "audience": page_data["audience"],
                 "lead_type": page_data["lead_type"],
-                "pain_point": "auto_inferred",
+                "pain_point": "real_instagram_scan_error",
                 "offer": auto_cta,
                 "goal": goal,
                 "video_length": video_length,
                 "tone": tone,
                 "scenario": scenario,
-                "action_type": "generation_error",
+                "action_type": "live_instagram_scan_error",
                 "output_chars": 0,
                 "user_agent": user_agent,
                 "uploaded_files_json": uploaded_files_json,
@@ -2091,9 +2193,7 @@ if is_admin():
     render_admin_analytics()
 
 st.divider()
-st.caption(
-    "Final file: Country-specific, Instagram-page-aware producer intelligence engine with hidden backend intelligence, auto CTA, admin review tools, and analytics."
-)
+st.caption()
 
 
 
