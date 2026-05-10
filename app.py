@@ -2224,7 +2224,4 @@ if is_admin():
     render_admin_analytics()
 
 st.divider()
-st.caption()
-
-
-
+st.caption("Live Instagram scanner ready.")
