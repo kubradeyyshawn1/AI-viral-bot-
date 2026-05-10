@@ -57,8 +57,10 @@ TREND_FEED_JSON = "[]"
 
 # Optional Apify Instagram trend scanner.
 APIFY_API_TOKEN = ""
-APIFY_INSTAGRAM_ACTOR = "apify/instagram-reel-scraper"
-APIFY_RESULTS_LIMIT = "60"
+APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
+APIFY_RESULTS_LIMIT = "5"
+APIFY_MAX_SOURCES = "4"
+APIFY_TIMEOUT_SECONDS = "90"
 APIFY_INPUT_FIELD = "directUrls"
 """
 
@@ -387,10 +389,24 @@ def summarize_live_analytics_for_prompt(live_data: Dict[str, Any]) -> str:
 # LATEST VIRAL TREND FEED CONNECTOR
 # --------------------------------------------------
 def parse_datetime_safe(value: str) -> datetime | None:
-    if not value:
+    if value is None or value == "":
         return None
     try:
-        normalized = str(value).replace("Z", "+00:00")
+        # Apify actors may return ISO strings, Unix seconds, or Unix milliseconds.
+        if isinstance(value, (int, float)):
+            timestamp_value = float(value)
+            if timestamp_value > 10_000_000_000:
+                timestamp_value = timestamp_value / 1000
+            return datetime.fromtimestamp(timestamp_value, tz=timezone.utc)
+
+        value_str = str(value).strip()
+        if value_str.isdigit():
+            timestamp_value = float(value_str)
+            if timestamp_value > 10_000_000_000:
+                timestamp_value = timestamp_value / 1000
+            return datetime.fromtimestamp(timestamp_value, tz=timezone.utc)
+
+        normalized = value_str.replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
@@ -542,15 +558,26 @@ def apify_actor_id_for_url(actor: str) -> str:
 def build_apify_scrape_urls(page_data: Dict[str, Any]) -> List[str]:
     urls: List[str] = []
 
+    # Keep the first live scan small so Streamlit does not timeout.
+    # Increase APIFY_MAX_SOURCES later once the actor is stable.
+    try:
+        max_sources = int(st.secrets.get("APIFY_MAX_SOURCES", "") or os.getenv("APIFY_MAX_SOURCES", "4"))
+    except Exception:
+        max_sources = 4
+
     for username in get_tracked_pages_for_page(page_data):
         clean = username.strip().lstrip("@")
         if clean:
             urls.append(f"https://www.instagram.com/{clean}/reels/")
+        if len(urls) >= max_sources:
+            return urls
 
     for hashtag in get_tracked_hashtags_for_page(page_data):
         clean_tag = hashtag.strip().lstrip("#")
         if clean_tag:
             urls.append(f"https://www.instagram.com/explore/tags/{clean_tag}/")
+        if len(urls) >= max_sources:
+            return urls
 
     return urls
 
@@ -603,13 +630,18 @@ def normalize_apify_item(item: Dict[str, Any], page_data: Dict[str, Any], platfo
 
 def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit: int = 40) -> Dict[str, Any]:
     token = st.secrets.get("APIFY_API_TOKEN", "") or os.getenv("APIFY_API_TOKEN", "")
-    actor = st.secrets.get("APIFY_INSTAGRAM_ACTOR", "") or os.getenv("APIFY_INSTAGRAM_ACTOR", "apify/instagram-reel-scraper")
+    actor = st.secrets.get("APIFY_INSTAGRAM_ACTOR", "") or os.getenv("APIFY_INSTAGRAM_ACTOR", "apify/instagram-scraper")
     input_field = st.secrets.get("APIFY_INPUT_FIELD", "") or os.getenv("APIFY_INPUT_FIELD", "directUrls")
 
     try:
         results_limit = int(st.secrets.get("APIFY_RESULTS_LIMIT", "") or os.getenv("APIFY_RESULTS_LIMIT", str(limit)))
     except Exception:
         results_limit = limit
+
+    try:
+        timeout_seconds = int(st.secrets.get("APIFY_TIMEOUT_SECONDS", "") or os.getenv("APIFY_TIMEOUT_SECONDS", "90"))
+    except Exception:
+        timeout_seconds = 90
 
     if not token:
         return {
@@ -644,7 +676,7 @@ def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit
             method="POST",
         )
 
-        with urlopen(request, timeout=120) as response:
+        with urlopen(request, timeout=timeout_seconds) as response:
             payload = json.loads(response.read().decode("utf-8"))
 
         if isinstance(payload, dict):
@@ -770,7 +802,7 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
         st.write(", ".join(["#" + h for h in tracked_hashtags]) if tracked_hashtags else "No tracked hashtags mapped.")
 
     if not trend_data.get("connected") or not items:
-        st.error("No real Instagram viral content was scraped. Add/check APIFY_API_TOKEN in Streamlit Secrets and confirm the Apify actor/input settings are correct.")
+        st.error("No real Instagram viral content was scraped. Check APIFY_API_TOKEN, APIFY_INSTAGRAM_ACTOR, APIFY_INPUT_FIELD, and APIFY_RESULTS_LIMIT in Streamlit Secrets. Start with APIFY_RESULTS_LIMIT=5 and APIFY_MAX_SOURCES=4.")
         st.stop()
 
     # Highest-quality ranking first: newest + high velocity + high views.
@@ -835,6 +867,7 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
                 st.write(f"**Engagement rate:** {item.get('engagement_rate', 0)}")
                 st.write(f"**Why this fits Koocester:** {koocester_fit_reason(item, page_data)}")
 
+    render_table("Top Real Scraped Matches for Koocester", items)
     render_table("Real Viral Now: scraped Instagram content from 0-7 days", viral_now)
     render_table("Real Rising / About-To-Go-Viral: scraped Instagram content from 8-14 days", rising)
     render_table("Pattern Validation: scraped Instagram content from 15-30 days", validation)
@@ -1830,7 +1863,7 @@ Higher risk:
 # --------------------------------------------------
 st.title("Koocester Viral Content Generator")
 st.caption(
-    "Latest viral content ideas based on page niche, country, connected analytics, and optional latest public trend feed."
+    "Scrape real Instagram content first, then show links, account data, engagement metrics, and Koocester-fit reasons."
 )
 
 session_id = get_session_id()
@@ -1840,7 +1873,7 @@ render_setup_guide()
 left, right = st.columns([1.15, 0.85], gap="large")
 
 with left:
-    st.subheader("Generate Viral Content Ideas")
+    st.subheader("Scan Real Viral Instagram Content")
 
     page_name = st.selectbox(
         "Koocester Instagram Page",
@@ -1914,17 +1947,15 @@ with left:
         help="Use this if you do not have TREND_FEED_API_URL yet. Keep content recent: 0-7 days viral now, 8-14 days rising, 15-30 days validation only.",
     )
 
-    # Always run the real Instagram scraper first.
-    # This app is now a live viral content scanner, not an assumptions-first idea generator.
-    run_live_scraper = True
-
-    latest_trend_data = fetch_latest_trend_feed(
-        page_data,
-        platform,
-        manual_trend_json=manual_trend_json,
-        run_live_scraper=run_live_scraper,
-    )
-    latest_trend_summary = summarize_latest_trends_for_prompt(latest_trend_data)
+    # Do NOT run Apify on page load.
+    # It must only scrape after the user clicks the scan button, otherwise Streamlit times out
+    # and the old AI output receives a failed trend feed before the scan starts.
+    latest_trend_data = {
+        "connected": False,
+        "status": "Not scanned yet. Click Scan Viral Instagram Content to run Apify.",
+        "items": [],
+    }
+    latest_trend_summary = "Not scanned yet. Click Scan Viral Instagram Content to run Apify."
 
     advanced_context = ""
     draft_video_idea = ""
