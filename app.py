@@ -58,9 +58,7 @@ TREND_FEED_JSON = "[]"
 # Optional Apify Instagram trend scanner.
 APIFY_API_TOKEN = ""
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
-APIFY_RESULTS_LIMIT = "5"
-APIFY_MAX_SOURCES = "4"
-APIFY_TIMEOUT_SECONDS = "90"
+APIFY_RESULTS_LIMIT = "15"
 APIFY_INPUT_FIELD = "directUrls"
 """
 
@@ -389,24 +387,10 @@ def summarize_live_analytics_for_prompt(live_data: Dict[str, Any]) -> str:
 # LATEST VIRAL TREND FEED CONNECTOR
 # --------------------------------------------------
 def parse_datetime_safe(value: str) -> datetime | None:
-    if value is None or value == "":
+    if not value:
         return None
     try:
-        # Apify actors may return ISO strings, Unix seconds, or Unix milliseconds.
-        if isinstance(value, (int, float)):
-            timestamp_value = float(value)
-            if timestamp_value > 10_000_000_000:
-                timestamp_value = timestamp_value / 1000
-            return datetime.fromtimestamp(timestamp_value, tz=timezone.utc)
-
-        value_str = str(value).strip()
-        if value_str.isdigit():
-            timestamp_value = float(value_str)
-            if timestamp_value > 10_000_000_000:
-                timestamp_value = timestamp_value / 1000
-            return datetime.fromtimestamp(timestamp_value, tz=timezone.utc)
-
-        normalized = value_str.replace("Z", "+00:00")
+        normalized = str(value).replace("Z", "+00:00")
         parsed = datetime.fromisoformat(normalized)
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)
@@ -556,30 +540,36 @@ def apify_actor_id_for_url(actor: str) -> str:
 
 
 def build_apify_scrape_urls(page_data: Dict[str, Any]) -> List[str]:
+    """Build a smaller, cleaner source list so Apify returns real posts instead of only profile rows.
+
+    Important:
+    - Profile URLs are better than /reels/ URLs for apify/instagram-scraper.
+    - Limit the amount of sources per run to reduce timeout risk.
+    - Hashtags are useful, but they can be slower, so keep them limited.
+    """
     urls: List[str] = []
 
-    # Keep the first live scan small so Streamlit does not timeout.
-    # Increase APIFY_MAX_SOURCES later once the actor is stable.
-    try:
-        max_sources = int(st.secrets.get("APIFY_MAX_SOURCES", "") or os.getenv("APIFY_MAX_SOURCES", "4"))
-    except Exception:
-        max_sources = 4
+    max_profiles = int(st.secrets.get("APIFY_MAX_PROFILES", "3") or 3)
+    max_hashtags = int(st.secrets.get("APIFY_MAX_HASHTAGS", "2") or 2)
 
-    for username in get_tracked_pages_for_page(page_data):
-        clean = username.strip().lstrip("@")
+    for username in get_tracked_pages_for_page(page_data)[:max_profiles]:
+        clean = username.strip().lstrip("@").strip("/")
         if clean:
-            urls.append(f"https://www.instagram.com/{clean}/reels/")
-        if len(urls) >= max_sources:
-            return urls
+            urls.append(f"https://www.instagram.com/{clean}/")
 
-    for hashtag in get_tracked_hashtags_for_page(page_data):
-        clean_tag = hashtag.strip().lstrip("#")
+    for hashtag in get_tracked_hashtags_for_page(page_data)[:max_hashtags]:
+        clean_tag = hashtag.strip().lstrip("#").strip("/")
         if clean_tag:
             urls.append(f"https://www.instagram.com/explore/tags/{clean_tag}/")
-        if len(urls) >= max_sources:
-            return urls
 
-    return urls
+    # remove duplicates while preserving order
+    seen = set()
+    deduped = []
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            deduped.append(url)
+    return deduped
 
 
 def normalize_apify_item(item: Dict[str, Any], page_data: Dict[str, Any], platform: str) -> Dict[str, Any]:
@@ -589,6 +579,7 @@ def normalize_apify_item(item: Dict[str, Any], page_data: Dict[str, Any], platfo
         or item.get("owner")
         or item.get("account")
         or item.get("profileName")
+        or item.get("ownerFullName")
         or ""
     )
 
@@ -600,31 +591,49 @@ def normalize_apify_item(item: Dict[str, Any], page_data: Dict[str, Any], platfo
         or (f"https://www.instagram.com/reel/{shortcode}/" if shortcode else "")
     )
 
-    caption = item.get("caption") or item.get("text") or item.get("title") or ""
+    caption = item.get("caption") or item.get("text") or item.get("title") or item.get("alt") or ""
     timestamp = (
         item.get("timestamp")
         or item.get("takenAt")
         or item.get("taken_at")
         or item.get("postedAt")
         or item.get("date")
+        or item.get("createdAt")
         or ""
     )
 
+    views = item.get("videoViewCount") or item.get("videoPlayCount") or item.get("playCount") or item.get("views") or item.get("viewCount") or item.get("video_view_count") or 0
+    likes = item.get("likesCount") or item.get("likes") or item.get("likeCount") or item.get("likes_count") or 0
+    comments = item.get("commentsCount") or item.get("comments") or item.get("commentCount") or item.get("comments_count") or 0
+    shares = item.get("sharesCount") or item.get("shares") or item.get("shareCount") or 0
+    saves = item.get("savesCount") or item.get("saves") or item.get("saveCount") or 0
+
+    # If Apify returns only the input source URL, it is not a real reel/post result.
+    source_only = False
+    if url:
+        lowered_url = url.lower().rstrip("/")
+        source_only = lowered_url.endswith("/reels") or "/explore/tags/" in lowered_url
+
+    has_real_post_signal = bool(shortcode or caption or int(views or 0) or int(likes or 0) or int(comments or 0)) and not source_only
+
     return {
-        "title": caption[:120] if caption else f"Instagram reel from @{owner}",
+        "title": caption[:120] if caption else f"Instagram reel/post from @{owner or 'unknown'}",
         "caption": caption,
         "posted_at": timestamp,
-        "views": item.get("videoViewCount") or item.get("videoPlayCount") or item.get("playCount") or item.get("views") or item.get("viewCount") or 0,
-        "likes": item.get("likesCount") or item.get("likes") or item.get("likeCount") or 0,
-        "comments": item.get("commentsCount") or item.get("comments") or item.get("commentCount") or 0,
-        "shares": item.get("sharesCount") or item.get("shares") or item.get("shareCount") or 0,
-        "saves": item.get("savesCount") or item.get("saves") or item.get("saveCount") or 0,
+        "views": views,
+        "likes": likes,
+        "comments": comments,
+        "shares": shares,
+        "saves": saves,
         "market": page_data.get("market", ""),
         "platform": platform,
-        "account": owner,
+        "account": owner or "unknown",
         "source": "apify_instagram_scraper",
         "url": url,
+        "shortcode": shortcode,
         "niche": page_data.get("internal_key", ""),
+        "has_real_post_signal": has_real_post_signal,
+        "raw_keys": sorted(list(item.keys()))[:40],
     }
 
 
@@ -637,11 +646,6 @@ def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit
         results_limit = int(st.secrets.get("APIFY_RESULTS_LIMIT", "") or os.getenv("APIFY_RESULTS_LIMIT", str(limit)))
     except Exception:
         results_limit = limit
-
-    try:
-        timeout_seconds = int(st.secrets.get("APIFY_TIMEOUT_SECONDS", "") or os.getenv("APIFY_TIMEOUT_SECONDS", "90"))
-    except Exception:
-        timeout_seconds = 90
 
     if not token:
         return {
@@ -661,12 +665,20 @@ def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit
     actor_id = apify_actor_id_for_url(actor)
     endpoint = f"https://api.apify.com/v2/acts/{actor_id}/run-sync-get-dataset-items?token={token}"
 
+    # Keep the input broad enough for the public Apify Instagram actor, but small enough to avoid Streamlit timeout.
+    base_input = {
+        "resultsLimit": results_limit,
+        "resultsType": st.secrets.get("APIFY_RESULTS_TYPE", "posts") or "posts",
+        "searchLimit": results_limit,
+        "addParentData": False,
+    }
+
     if input_field == "startUrls":
-        actor_input = {"startUrls": [{"url": url} for url in urls], "resultsLimit": results_limit, "resultsType": "posts"}
+        actor_input = {**base_input, "startUrls": [{"url": url} for url in urls]}
     elif input_field == "urls":
-        actor_input = {"urls": urls, "resultsLimit": results_limit, "resultsType": "posts"}
+        actor_input = {**base_input, "urls": urls}
     else:
-        actor_input = {"directUrls": urls, "resultsLimit": results_limit, "resultsType": "posts"}
+        actor_input = {**base_input, "directUrls": urls}
 
     try:
         request = Request(
@@ -676,7 +688,7 @@ def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit
             method="POST",
         )
 
-        with urlopen(request, timeout=timeout_seconds) as response:
+        with urlopen(request, timeout=180) as response:
             payload = json.loads(response.read().decode("utf-8"))
 
         if isinstance(payload, dict):
@@ -686,15 +698,47 @@ def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit
         else:
             raw_items = []
 
-        normalized = [normalize_apify_item(item, page_data, platform) for item in raw_items if isinstance(item, dict)]
-        normalized = [normalize_trend_item(item) for item in normalized]
+        normalized_all = [normalize_apify_item(item, page_data, platform) for item in raw_items if isinstance(item, dict)]
+
+        # Remove source-only rows like https://instagram.com/page/reels/ with no metrics.
+        normalized_real = [item for item in normalized_all if item.get("has_real_post_signal")]
+
+        if not normalized_real:
+            return {
+                "connected": False,
+                "status": (
+                    f"Apify connected, but returned {len(normalized_all)} source rows and 0 usable reel/post rows. "
+                    "This usually means the actor/input setting is wrong or the selected sources are not returning public post data. "
+                    "Try APIFY_INSTAGRAM_ACTOR='apify/instagram-scraper', APIFY_INPUT_FIELD='directUrls', APIFY_RESULTS_LIMIT='15'."
+                ),
+                "items": [],
+                "raw_count": len(raw_items),
+                "tracked_pages": get_tracked_pages_for_page(page_data),
+                "tracked_hashtags": get_tracked_hashtags_for_page(page_data),
+                "scrape_urls": urls,
+            }
+
+        normalized = [normalize_trend_item(item) for item in normalized_real]
+        normalized = sorted(
+            normalized,
+            key=lambda item: (
+                item.get("recency_bucket") != "viral_now_candidate",
+                -(item.get("velocity_score") or 0),
+                -(item.get("views") or 0),
+                -(item.get("likes") or 0),
+                -(item.get("comments") or 0),
+            ),
+        )
 
         return {
             "connected": True,
-            "status": f"Live Apify Instagram scraper connected. Scanned {len(urls)} niche sources for {page_data.get('market')} / {page_data.get('internal_key')}.",
+            "status": f"Live Apify Instagram scraper connected. Found {len(normalized)} usable reel/post items from {len(urls)} niche sources for {page_data.get('market')} / {page_data.get('internal_key')}.",
             "items": normalized[:results_limit],
+            "raw_count": len(raw_items),
+            "usable_count": len(normalized),
             "tracked_pages": get_tracked_pages_for_page(page_data),
             "tracked_hashtags": get_tracked_hashtags_for_page(page_data),
+            "scrape_urls": urls,
         }
     except Exception as error:
         return {
@@ -703,6 +747,7 @@ def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit
             "items": [],
             "tracked_pages": get_tracked_pages_for_page(page_data),
             "tracked_hashtags": get_tracked_hashtags_for_page(page_data),
+            "scrape_urls": urls,
         }
 
 
@@ -780,29 +825,55 @@ def koocester_fit_reason(item: Dict[str, Any], page_data: Dict[str, Any]) -> str
 
 def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data: Dict[str, Any]) -> None:
     st.divider()
-    st.subheader("Live Viral Instagram Scan")
+    st.title("Live Viral Instagram Scan")
+    st.caption("Real scraped Instagram links first. No guessed viral examples.")
 
     items = trend_data.get("items", []) or []
     tracked_pages = trend_data.get("tracked_pages", []) or get_tracked_pages_for_page(page_data)
     tracked_hashtags = trend_data.get("tracked_hashtags", []) or get_tracked_hashtags_for_page(page_data)
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Scanner", "Connected" if trend_data.get("connected") else "Not connected")
-    c2.metric("Items Found", len(items))
-    c3.metric("Country", page_data.get("market", "-"))
-    c4.metric("Niche", page_data.get("internal_key", "-"))
+    st.markdown(
+        """
+        <style>
+        .scan-card {
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 18px;
+            padding: 18px;
+            margin: 12px 0;
+            background: rgba(255,255,255,0.035);
+        }
+        .scan-label {
+            opacity: 0.72;
+            font-size: 0.88rem;
+        }
+        .scan-link a { text-decoration: none; font-weight: 700; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    st.write(f"**Selected Koocester page:** {page_name}")
-    st.write(f"**Scanner status:** {trend_data.get('status', 'No status returned')}")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Scanner", "Connected" if trend_data.get("connected") else "Not connected")
+    c2.metric("Usable Items", len(items))
+    c3.metric("Raw Rows", trend_data.get("raw_count", len(items)))
+    c4.metric("Country", page_data.get("market", "-"))
+    c5.metric("Niche", page_data.get("internal_key", "-"))
+
+    status_type = st.success if trend_data.get("connected") and items else st.warning
+    status_type(trend_data.get("status", "No scanner status returned."))
 
     with st.expander("Tracked niche sources used for this scan", expanded=False):
         st.write("**Tracked Instagram pages:**")
         st.write(", ".join(["@" + p for p in tracked_pages]) if tracked_pages else "No tracked pages mapped.")
         st.write("**Tracked hashtags:**")
         st.write(", ".join(["#" + h for h in tracked_hashtags]) if tracked_hashtags else "No tracked hashtags mapped.")
+        if trend_data.get("scrape_urls"):
+            st.write("**Actual URLs sent to Apify:**")
+            st.code("\n".join(trend_data.get("scrape_urls", [])), language="text")
 
     if not trend_data.get("connected") or not items:
-        st.error("No real Instagram viral content was scraped. Check APIFY_API_TOKEN, APIFY_INSTAGRAM_ACTOR, APIFY_INPUT_FIELD, and APIFY_RESULTS_LIMIT in Streamlit Secrets. Start with APIFY_RESULTS_LIMIT=5 and APIFY_MAX_SOURCES=4.")
+        st.error("No usable real Instagram reel/post data was returned. The token is connected, but the actor/input/source URLs need adjustment.")
+        st.info("Recommended Streamlit Secrets: APIFY_INSTAGRAM_ACTOR='apify/instagram-scraper', APIFY_INPUT_FIELD='directUrls', APIFY_RESULTS_LIMIT='15'.")
         st.stop()
 
     # Highest-quality ranking first: newest + high velocity + high views.
@@ -813,77 +884,94 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
             -(x.get("velocity_score") or 0),
             -(x.get("views") or 0),
             -(x.get("likes") or 0),
+            -(x.get("comments") or 0),
         ),
     )
 
+    total_views = sum(int(i.get("views") or 0) for i in items)
+    total_likes = sum(int(i.get("likes") or 0) for i in items)
+    total_comments = sum(int(i.get("comments") or 0) for i in items)
+    avg_engagement = round(sum(float(i.get("engagement_rate") or 0) for i in items) / max(len(items), 1), 4)
+
+    a1, a2, a3, a4 = st.columns(4)
+    a1.metric("Total Views", f"{total_views:,}")
+    a2.metric("Total Likes", f"{total_likes:,}")
+    a3.metric("Total Comments", f"{total_comments:,}")
+    a4.metric("Avg Engagement", avg_engagement)
+
+    table_rows = []
+    for item in items[:30]:
+        caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
+        if len(caption) > 150:
+            caption = caption[:150] + "..."
+        table_rows.append(
+            {
+                "Account": "@" + str(item.get("account") or "unknown"),
+                "Views": item.get("views", 0),
+                "Likes": item.get("likes", 0),
+                "Comments": item.get("comments", 0),
+                "Shares": item.get("shares", 0),
+                "Saves": item.get("saves", 0),
+                "Age Days": item.get("age_days"),
+                "Velocity": item.get("velocity_score", 0),
+                "Engagement Rate": item.get("engagement_rate", 0),
+                "Bucket": item.get("recency_bucket", "unknown"),
+                "Caption / Topic": caption,
+                "Link": item.get("url") or item.get("permalink") or "",
+            }
+        )
+
+    st.subheader("Top Real Scraped Matches for Koocester")
+    st.dataframe(table_rows, use_container_width=True, hide_index=True)
+
     viral_now = [i for i in items if i.get("recency_bucket") == "viral_now_candidate"]
     rising = [i for i in items if i.get("recency_bucket") == "rising_candidate"]
-    validation = [i for i in items if i.get("recency_bucket") == "pattern_validation_only"]
+    validation = [i for i in items if i.get("recency_bucket") == "pattern_validation_only" or i.get("age_days") is None]
 
-    def render_table(title: str, data: List[Dict[str, Any]]) -> None:
+    def render_cards(title: str, data: List[Dict[str, Any]]) -> None:
         st.markdown(f"### {title}")
         if not data:
             st.info("No matching real scraped items in this bucket.")
             return
 
-        table_rows = []
-        for item in data[:25]:
-            caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
-            if len(caption) > 130:
-                caption = caption[:130] + "..."
-            table_rows.append(
-                {
-                    "Account": "@" + str(item.get("account") or "unknown"),
-                    "Views": item.get("views", 0),
-                    "Likes": item.get("likes", 0),
-                    "Comments": item.get("comments", 0),
-                    "Shares": item.get("shares", 0),
-                    "Saves": item.get("saves", 0),
-                    "Age Days": item.get("age_days"),
-                    "Velocity": item.get("velocity_score", 0),
-                    "Engagement Rate": item.get("engagement_rate", 0),
-                    "Caption / Topic": caption,
-                    "Link": item.get("url") or item.get("permalink") or "",
-                }
-            )
-        st.dataframe(table_rows, use_container_width=True)
-
-        for index, item in enumerate(data[:15], start=1):
+        for index, item in enumerate(data[:12], start=1):
             account = item.get("account") or "unknown"
             url = item.get("url") or item.get("permalink") or ""
             caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
-            if len(caption) > 280:
-                caption = caption[:280] + "..."
+            if len(caption) > 260:
+                caption = caption[:260] + "..."
 
-            with st.expander(f"{index}. @{account} | {item.get('views', 0)} views | {item.get('age_days')} days old"):
-                st.write(f"**Instagram link:** {url}")
-                st.write(f"**Caption/topic:** {caption if caption else 'No caption returned by scraper.'}")
-                st.write(f"**Views:** {item.get('views', 0)}")
-                st.write(f"**Likes:** {item.get('likes', 0)}")
-                st.write(f"**Comments:** {item.get('comments', 0)}")
-                st.write(f"**Shares:** {item.get('shares', 0)}")
-                st.write(f"**Saves:** {item.get('saves', 0)}")
-                st.write(f"**Velocity score:** {item.get('velocity_score', 0)}")
-                st.write(f"**Engagement rate:** {item.get('engagement_rate', 0)}")
-                st.write(f"**Why this fits Koocester:** {koocester_fit_reason(item, page_data)}")
+            with st.container(border=True):
+                top = st.columns([2.2, 1, 1, 1])
+                top[0].markdown(f"**{index}. @{account}**")
+                top[1].metric("Views", f"{int(item.get('views') or 0):,}")
+                top[2].metric("Likes", f"{int(item.get('likes') or 0):,}")
+                top[3].metric("Comments", f"{int(item.get('comments') or 0):,}")
 
-    render_table("Top Real Scraped Matches for Koocester", items)
-    render_table("Real Viral Now: scraped Instagram content from 0-7 days", viral_now)
-    render_table("Real Rising / About-To-Go-Viral: scraped Instagram content from 8-14 days", rising)
-    render_table("Pattern Validation: scraped Instagram content from 15-30 days", validation)
+                st.write(caption if caption else "No caption returned by scraper.")
+                if url:
+                    st.link_button("Open Instagram Link", url)
+
+                detail_cols = st.columns(4)
+                detail_cols[0].write(f"**Age:** {item.get('age_days')}")
+                detail_cols[1].write(f"**Velocity:** {item.get('velocity_score', 0)}")
+                detail_cols[2].write(f"**Engagement:** {item.get('engagement_rate', 0)}")
+                detail_cols[3].write(f"**Bucket:** {item.get('recency_bucket', 'unknown')}")
+                st.caption(koocester_fit_reason(item, page_data))
+
+    render_cards("Real Viral Now: 0-7 days", viral_now)
+    render_cards("Real Rising / About-To-Go-Viral: 8-14 days", rising)
+    render_cards("Useful Pattern Validation / Unknown Date", validation)
 
     st.divider()
-    st.subheader("Best Matches for Koocester")
-    best_matches = items[:10]
-    if not best_matches:
-        st.info("No best matches available.")
-    else:
-        for idx, item in enumerate(best_matches, start=1):
-            account = item.get("account") or "unknown"
-            url = item.get("url") or item.get("permalink") or ""
-            st.markdown(f"**{idx}. @{account}** — {item.get('views', 0)} views | {item.get('likes', 0)} likes | {item.get('comments', 0)} comments")
-            st.write(url)
-            st.caption(koocester_fit_reason(item, page_data))
+    st.subheader("What Koocester Should Watch From These Matches")
+    st.markdown(
+        """
+- Prioritize links with real views, comments, and recent timestamps.
+- If most rows have `None` age or 0 metrics, the scraper is reaching Instagram but not receiving full analytics from the actor.
+- The best matches are ranked by recency, velocity, views, likes, and comments.
+"""
+    )
 
 
 # --------------------------------------------------
@@ -1863,7 +1951,7 @@ Higher risk:
 # --------------------------------------------------
 st.title("Koocester Viral Content Generator")
 st.caption(
-    "Scrape real Instagram content first, then show links, account data, engagement metrics, and Koocester-fit reasons."
+    "Latest viral content ideas based on page niche, country, connected analytics, and optional latest public trend feed."
 )
 
 session_id = get_session_id()
@@ -1873,7 +1961,7 @@ render_setup_guide()
 left, right = st.columns([1.15, 0.85], gap="large")
 
 with left:
-    st.subheader("Scan Real Viral Instagram Content")
+    st.subheader("Live Instagram Viral Scanner")
 
     page_name = st.selectbox(
         "Koocester Instagram Page",
@@ -1947,15 +2035,10 @@ with left:
         help="Use this if you do not have TREND_FEED_API_URL yet. Keep content recent: 0-7 days viral now, 8-14 days rising, 15-30 days validation only.",
     )
 
-    # Do NOT run Apify on page load.
-    # It must only scrape after the user clicks the scan button, otherwise Streamlit times out
-    # and the old AI output receives a failed trend feed before the scan starts.
-    latest_trend_data = {
-        "connected": False,
-        "status": "Not scanned yet. Click Scan Viral Instagram Content to run Apify.",
-        "items": [],
-    }
-    latest_trend_summary = "Not scanned yet. Click Scan Viral Instagram Content to run Apify."
+    # Do not scrape on page load. Only scrape after the user clicks the scan button.
+    # This prevents timeouts and keeps the UI fast.
+    latest_trend_data = {"connected": False, "status": "Not scanned yet. Click Scan Viral Instagram Content.", "items": []}
+    latest_trend_summary = "Not scanned yet. Click Scan Viral Instagram Content."
 
     advanced_context = ""
     draft_video_idea = ""
@@ -2224,4 +2307,7 @@ if is_admin():
     render_admin_analytics()
 
 st.divider()
-st.caption("Live Instagram scanner ready.")
+st.caption("Koocester Producer Intelligence Engine")
+
+
+
