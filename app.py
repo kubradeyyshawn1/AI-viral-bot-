@@ -60,6 +60,8 @@ APIFY_API_TOKEN = ""
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
 APIFY_RESULTS_LIMIT = "15"
 APIFY_INPUT_FIELD = "directUrls"
+APIFY_MAX_PROFILES = "6"
+APIFY_MAX_HASHTAGS = "3"
 """
 
 
@@ -549,8 +551,8 @@ def build_apify_scrape_urls(page_data: Dict[str, Any]) -> List[str]:
     """
     urls: List[str] = []
 
-    max_profiles = int(st.secrets.get("APIFY_MAX_PROFILES", "3") or 3)
-    max_hashtags = int(st.secrets.get("APIFY_MAX_HASHTAGS", "2") or 2)
+    max_profiles = int(st.secrets.get("APIFY_MAX_PROFILES", "6") or 6)
+    max_hashtags = int(st.secrets.get("APIFY_MAX_HASHTAGS", "3") or 3)
 
     for username in get_tracked_pages_for_page(page_data)[:max_profiles]:
         clean = username.strip().lstrip("@").strip("/")
@@ -796,74 +798,246 @@ def summarize_latest_trends_for_prompt(trend_data: Dict[str, Any]) -> str:
 
 
 # --------------------------------------------------
-# REAL VIRAL INSTAGRAM SCAN OUTPUT
+# REAL VIRAL INSTAGRAM SCAN OUTPUT — PRODUCER VERSION
 # --------------------------------------------------
-def koocester_fit_reason(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
-    market = page_data.get("market", "")
+def format_number(value: Any) -> str:
+    """Format large metrics into producer-friendly labels."""
+    try:
+        value = int(value or 0)
+    except Exception:
+        return "0"
+
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+    return str(value)
+
+
+def format_posted_recency(age_days: Any) -> str:
+    """Professional replacement for 'Age Days'."""
+    if age_days is None:
+        return "Date unavailable"
+    try:
+        age_days = int(age_days)
+    except Exception:
+        return "Date unavailable"
+
+    if age_days == 0:
+        return "Posted today"
+    if age_days == 1:
+        return "Posted 1 day ago"
+    return f"Posted {age_days} days ago"
+
+
+def virality_probability(item: Dict[str, Any]) -> Tuple[int, str]:
+    """Estimate breakout potential from public metrics returned by scraper.
+
+    This is not a guaranteed prediction. It is a practical producer score based on
+    views, engagement, discussion, and recency.
+    """
+    views = int(item.get("views") or 0)
+    likes = int(item.get("likes") or 0)
+    comments = int(item.get("comments") or 0)
+    shares = int(item.get("shares") or 0)
+    saves = int(item.get("saves") or 0)
+    age_days = item.get("age_days")
+
+    score = 30
+
+    # Reach / validation signal
+    if views >= 1_000_000:
+        score += 30
+    elif views >= 500_000:
+        score += 25
+    elif views >= 100_000:
+        score += 18
+    elif views >= 30_000:
+        score += 10
+    elif views >= 10_000:
+        score += 5
+
+    # Like signal
+    if likes >= 25_000:
+        score += 18
+    elif likes >= 10_000:
+        score += 14
+    elif likes >= 3_000:
+        score += 9
+    elif likes >= 1_000:
+        score += 5
+
+    # Comment/discussion signal
+    if comments >= 1_000:
+        score += 14
+    elif comments >= 500:
+        score += 11
+    elif comments >= 100:
+        score += 7
+    elif comments >= 30:
+        score += 4
+
+    # Share/save signal if available
+    score += min(10, (shares // 100) + (saves // 100))
+
+    # Recency/velocity signal
+    if age_days is not None:
+        try:
+            age_days_int = int(age_days)
+            if age_days_int <= 3:
+                score += 12
+            elif age_days_int <= 7:
+                score += 8
+            elif age_days_int <= 14:
+                score += 4
+        except Exception:
+            pass
+
+    score = max(0, min(score, 95))
+
+    if score >= 82:
+        label = "High breakout potential"
+    elif score >= 65:
+        label = "Strong rising potential"
+    elif score >= 48:
+        label = "Moderate potential"
+    else:
+        label = "Weak/early signal"
+
+    return score, label
+
+
+def hook_strength(item: Dict[str, Any]) -> str:
+    caption = (item.get("caption") or item.get("title") or "").lower()
+
+    strong_words = [
+        "mistake", "regret", "truth", "secret", "hidden", "before", "why",
+        "nobody", "stop", "avoid", "cost", "expensive", "worth", "cheap",
+        "luxury", "owner", "founder", "renovation", "property", "business",
+        "million", "rich", "poor", "best", "worst", "problem", "solution",
+    ]
+    hits = sum(1 for word in strong_words if word in caption)
+
+    if hits >= 3:
+        return "Strong hook"
+    if hits >= 1:
+        return "Decent hook"
+    return "Weak/unclear hook"
+
+
+def retention_trigger(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
     niche = page_data.get("internal_key", "")
     caption = (item.get("caption") or item.get("title") or "").lower()
 
-    reason_parts = []
+    if any(word in caption for word in ["mistake", "regret", "avoid", "before"]):
+        return "Mistake/regret tension"
+    if any(word in caption for word in ["secret", "hidden", "nobody", "truth"]):
+        return "Curiosity gap"
+    if any(word in caption for word in ["worth", "cheap", "expensive", "cost"]):
+        return "Value/cost tension"
+    if niche in ["homes", "homes_my"]:
+        return "Visual transformation / homeowner decision tension"
     if niche in ["autos", "autos_my"]:
-        reason_parts.append("Matches Koocester Autos because it sits in premium car / ownership / buyer-interest content.")
-    elif niche in ["homes", "homes_my"]:
-        reason_parts.append("Matches Koocester Homes because it sits in renovation, property, home tour, layout, or homeowner-interest content.")
+        return "Ownership desire / status tension"
+    if niche in ["business", "business_my"]:
+        return "Founder lesson / business opinion tension"
+    return "Lifestyle discovery / social proof"
+
+
+def producer_insight(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
+    niche = page_data.get("internal_key", "")
+    views = int(item.get("views") or 0)
+    comments = int(item.get("comments") or 0)
+    probability_score, probability_label = virality_probability(item)
+
+    if niche in ["homes", "homes_my"]:
+        base = "Producer value: study the opening visual, walkthrough pacing, homeowner problem, and reveal/payoff timing. This can guide what angles and decisions to capture on shoot day."
+    elif niche in ["autos", "autos_my"]:
+        base = "Producer value: study how the reel creates ownership desire, status tension, car detail shots, and buyer curiosity. This can guide B-roll priorities and narration."
     elif niche in ["business", "business_my"]:
-        reason_parts.append("Matches Koocester Business because it sits in founder, SME, networking, operator, or business-growth content.")
+        base = "Producer value: study the first opinion/lesson, founder credibility, room energy, and comment-triggering angle. This can guide interview questions and event coverage."
     else:
-        reason_parts.append("Matches Koocester Main because it sits in premium lifestyle, event, founder, discovery, or social-proof content.")
+        base = "Producer value: study the first 2 seconds, social proof, people/scene selection, and premium perception. This can guide what moments are actually worth filming."
 
-    reason_parts.append(f"It is mapped to the {market} market / selected page niche scan.")
+    if views >= 100_000:
+        base += " Strong validation: view count shows this format has already moved beyond normal reach."
+    elif comments >= 100:
+        base += " Discussion signal: comments suggest the topic creates reaction, which is useful for engagement-led content."
+    elif probability_score >= 65:
+        base += f" Rising signal: {probability_label.lower()} based on available metrics."
+    else:
+        base += " Use as creative reference only unless more metrics validate it."
 
-    if any(word in caption for word in ["mistake", "regret", "truth", "secret", "hidden", "before", "why"]):
-        reason_parts.append("The hook/caption uses tension or curiosity, which is useful for short-form retention.")
-    if item.get("views", 0):
-        reason_parts.append("It has available view data, so it can be ranked by performance instead of guessed manually.")
+    return base
 
-    return " ".join(reason_parts)
+
+def koocester_fit_reason(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
+    market = page_data.get("market", "")
+    niche = page_data.get("internal_key", "")
+
+    if niche in ["autos", "autos_my"]:
+        return f"Fits Koocester Autos because it matches premium car interest, ownership desire, or buyer decision content for {market}."
+    if niche in ["homes", "homes_my"]:
+        return f"Fits Koocester Homes because it matches renovation, property, home tour, layout, or homeowner decision content for {market}."
+    if niche in ["business", "business_my"]:
+        return f"Fits Koocester Business because it matches founder, SME, networking, operator, or business-growth content for {market}."
+    return f"Fits Koocester Main because it matches premium lifestyle, event, founder, discovery, or social-proof content for {market}."
+
+
+def diversify_by_profile(items: List[Dict[str, Any]], max_per_profile: int = 3) -> List[Dict[str, Any]]:
+    """Prevent one Instagram profile from dominating the scan result."""
+    profile_counts: Dict[str, int] = {}
+    diversified: List[Dict[str, Any]] = []
+
+    for item in items:
+        account = str(item.get("account") or "unknown").lower()
+        current_count = profile_counts.get(account, 0)
+
+        if current_count < max_per_profile:
+            diversified.append(item)
+            profile_counts[account] = current_count + 1
+
+    return diversified
+
+
+def render_source_health(items: List[Dict[str, Any]]) -> None:
+    accounts = {}
+    for item in items:
+        account = str(item.get("account") or "unknown")
+        accounts[account] = accounts.get(account, 0) + 1
+
+    if not accounts:
+        return
+
+    with st.expander("Profile diversity check", expanded=False):
+        st.write("This prevents the scan from depending on only one creator/profile.")
+        rows = [{"Profile": "@" + acc, "Posts Returned": count} for acc, count in sorted(accounts.items(), key=lambda x: x[1], reverse=True)]
+        st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data: Dict[str, Any]) -> None:
     st.divider()
-    st.title("Live Viral Instagram Scan")
-    st.caption("Real scraped Instagram links first. No guessed viral examples.")
+    st.title("Koocester Live Viral Intelligence Scan")
+    st.caption("Real scraped Instagram links ranked for producer usefulness. No fake viral assumptions.")
 
     items = trend_data.get("items", []) or []
     tracked_pages = trend_data.get("tracked_pages", []) or get_tracked_pages_for_page(page_data)
     tracked_hashtags = trend_data.get("tracked_hashtags", []) or get_tracked_hashtags_for_page(page_data)
 
-    st.markdown(
-        """
-        <style>
-        .scan-card {
-            border: 1px solid rgba(255,255,255,0.12);
-            border-radius: 18px;
-            padding: 18px;
-            margin: 12px 0;
-            background: rgba(255,255,255,0.035);
-        }
-        .scan-label {
-            opacity: 0.72;
-            font-size: 0.88rem;
-        }
-        .scan-link a { text-decoration: none; font-weight: 700; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
     c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Scanner", "Connected" if trend_data.get("connected") else "Not connected")
-    c2.metric("Usable Items", len(items))
+    c1.metric("Scanner Status", "Connected" if trend_data.get("connected") else "Not connected")
+    c2.metric("Usable Posts", len(items))
     c3.metric("Raw Rows", trend_data.get("raw_count", len(items)))
-    c4.metric("Country", page_data.get("market", "-"))
-    c5.metric("Niche", page_data.get("internal_key", "-"))
+    c4.metric("Market", page_data.get("market", "-"))
+    c5.metric("Page Niche", page_data.get("internal_key", "-"))
 
-    status_type = st.success if trend_data.get("connected") and items else st.warning
-    status_type(trend_data.get("status", "No scanner status returned."))
+    if trend_data.get("connected") and items:
+        st.success(trend_data.get("status", "Scanner connected."))
+    else:
+        st.warning(trend_data.get("status", "Scanner not connected."))
 
-    with st.expander("Tracked niche sources used for this scan", expanded=False):
-        st.write("**Tracked Instagram pages:**")
+    with st.expander("Sources scanned", expanded=False):
+        st.write("**Tracked profiles:**")
         st.write(", ".join(["@" + p for p in tracked_pages]) if tracked_pages else "No tracked pages mapped.")
         st.write("**Tracked hashtags:**")
         st.write(", ".join(["#" + h for h in tracked_hashtags]) if tracked_hashtags else "No tracked hashtags mapped.")
@@ -872,12 +1046,12 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
             st.code("\n".join(trend_data.get("scrape_urls", [])), language="text")
 
     if not trend_data.get("connected") or not items:
-        st.error("No usable real Instagram reel/post data was returned. The token is connected, but the actor/input/source URLs need adjustment.")
-        st.info("Recommended Streamlit Secrets: APIFY_INSTAGRAM_ACTOR='apify/instagram-scraper', APIFY_INPUT_FIELD='directUrls', APIFY_RESULTS_LIMIT='15'.")
+        st.error("No usable Instagram posts were returned. Check Apify token, actor, input field, and source profiles.")
+        st.info("Recommended secrets: APIFY_INSTAGRAM_ACTOR='apify/instagram-scraper', APIFY_INPUT_FIELD='directUrls', APIFY_RESULTS_LIMIT='15', APIFY_MAX_PROFILES='6'.")
         st.stop()
 
-    # Highest-quality ranking first: newest + high velocity + high views.
-    items = sorted(
+    # Rank by recency, velocity, views, likes, and comments.
+    ranked_items = sorted(
         items,
         key=lambda x: (
             x.get("recency_bucket") != "viral_now_candidate",
@@ -888,50 +1062,75 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
         ),
     )
 
-    total_views = sum(int(i.get("views") or 0) for i in items)
-    total_likes = sum(int(i.get("likes") or 0) for i in items)
-    total_comments = sum(int(i.get("comments") or 0) for i in items)
-    avg_engagement = round(sum(float(i.get("engagement_rate") or 0) for i in items) / max(len(items), 1), 4)
+    # Avoid showing only one profile.
+    diversified_items = diversify_by_profile(ranked_items, max_per_profile=3)
+
+    total_views = sum(int(i.get("views") or 0) for i in diversified_items)
+    total_likes = sum(int(i.get("likes") or 0) for i in diversified_items)
+    total_comments = sum(int(i.get("comments") or 0) for i in diversified_items)
+    avg_engagement = round(
+        sum(float(i.get("engagement_rate") or 0) for i in diversified_items) / max(len(diversified_items), 1),
+        4,
+    )
 
     a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Total Views", f"{total_views:,}")
-    a2.metric("Total Likes", f"{total_likes:,}")
-    a3.metric("Total Comments", f"{total_comments:,}")
-    a4.metric("Avg Engagement", avg_engagement)
+    a1.metric("Total Views Scanned", format_number(total_views))
+    a2.metric("Total Likes", format_number(total_likes))
+    a3.metric("Total Comments", format_number(total_comments))
+    a4.metric("Avg Engagement Rate", avg_engagement)
+
+    st.subheader("Executive Scan Summary")
+    st.markdown(
+        f"""
+**Selected page:** {page_name}  
+**Market:** {page_data.get("market")}  
+**Producer objective:** Find real posts/reels that already show traction or early breakout signals across multiple niche profiles.  
+**Diversity rule:** Maximum 3 posts per profile, so one account cannot dominate the scan.
+"""
+    )
+
+    render_source_health(diversified_items)
 
     table_rows = []
-    for item in items[:30]:
+    for item in diversified_items[:30]:
         caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
-        if len(caption) > 150:
-            caption = caption[:150] + "..."
+        if len(caption) > 140:
+            caption = caption[:140] + "..."
+
+        probability_score, probability_label = virality_probability(item)
+
         table_rows.append(
             {
-                "Account": "@" + str(item.get("account") or "unknown"),
-                "Views": item.get("views", 0),
-                "Likes": item.get("likes", 0),
-                "Comments": item.get("comments", 0),
-                "Shares": item.get("shares", 0),
-                "Saves": item.get("saves", 0),
-                "Age Days": item.get("age_days"),
-                "Velocity": item.get("velocity_score", 0),
+                "Profile": "@" + str(item.get("account") or "unknown"),
+                "Posted": format_posted_recency(item.get("age_days")),
+                "Views": int(item.get("views") or 0),
+                "Likes": int(item.get("likes") or 0),
+                "Comments": int(item.get("comments") or 0),
                 "Engagement Rate": item.get("engagement_rate", 0),
-                "Bucket": item.get("recency_bucket", "unknown"),
+                "Velocity Score": item.get("velocity_score", 0),
+                "Viral Probability": f"{probability_score}% - {probability_label}",
+                "Hook Strength": hook_strength(item),
+                "Retention Trigger": retention_trigger(item, page_data),
                 "Caption / Topic": caption,
                 "Link": item.get("url") or item.get("permalink") or "",
             }
         )
 
-    st.subheader("Top Real Scraped Matches for Koocester")
+    st.subheader("Ranked Viral / Rising Content Matches")
     st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
-    viral_now = [i for i in items if i.get("recency_bucket") == "viral_now_candidate"]
-    rising = [i for i in items if i.get("recency_bucket") == "rising_candidate"]
-    validation = [i for i in items if i.get("recency_bucket") == "pattern_validation_only" or i.get("age_days") is None]
+    viral_now = [i for i in diversified_items if i.get("recency_bucket") == "viral_now_candidate"]
+    rising = [i for i in diversified_items if i.get("recency_bucket") == "rising_candidate"]
+    validation = [
+        i for i in diversified_items
+        if i.get("recency_bucket") == "pattern_validation_only" or i.get("age_days") is None
+    ]
 
     def render_cards(title: str, data: List[Dict[str, Any]]) -> None:
         st.markdown(f"### {title}")
+
         if not data:
-            st.info("No matching real scraped items in this bucket.")
+            st.info("No matching posts in this section.")
             return
 
         for index, item in enumerate(data[:12], start=1):
@@ -941,40 +1140,46 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
             if len(caption) > 260:
                 caption = caption[:260] + "..."
 
+            probability_score, probability_label = virality_probability(item)
+
             with st.container(border=True):
                 top = st.columns([2.2, 1, 1, 1])
                 top[0].markdown(f"**{index}. @{account}**")
-                top[1].metric("Views", f"{int(item.get('views') or 0):,}")
-                top[2].metric("Likes", f"{int(item.get('likes') or 0):,}")
-                top[3].metric("Comments", f"{int(item.get('comments') or 0):,}")
+                top[1].metric("Views", format_number(item.get("views")))
+                top[2].metric("Likes", format_number(item.get("likes")))
+                top[3].metric("Comments", format_number(item.get("comments")))
 
                 st.write(caption if caption else "No caption returned by scraper.")
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.write(f"**Posted:** {format_posted_recency(item.get('age_days'))}")
+                m2.write(f"**Viral Probability:** {probability_score}%")
+                m3.write(f"**Hook:** {hook_strength(item)}")
+                m4.write(f"**Signal:** {probability_label}")
+
+                st.write(f"**Retention Trigger:** {retention_trigger(item, page_data)}")
+                st.write(f"**Why this fits Koocester:** {koocester_fit_reason(item, page_data)}")
+                st.write(f"**Producer Insight:** {producer_insight(item, page_data)}")
+
                 if url:
-                    st.link_button("Open Instagram Link", url)
+                    st.link_button("Open Instagram Post/Reel", url)
 
-                detail_cols = st.columns(4)
-                detail_cols[0].write(f"**Age:** {item.get('age_days')}")
-                detail_cols[1].write(f"**Velocity:** {item.get('velocity_score', 0)}")
-                detail_cols[2].write(f"**Engagement:** {item.get('engagement_rate', 0)}")
-                detail_cols[3].write(f"**Bucket:** {item.get('recency_bucket', 'unknown')}")
-                st.caption(koocester_fit_reason(item, page_data))
-
-    render_cards("Real Viral Now: 0-7 days", viral_now)
-    render_cards("Real Rising / About-To-Go-Viral: 8-14 days", rising)
-    render_cards("Useful Pattern Validation / Unknown Date", validation)
+    render_cards("Viral Now: validated within 0–7 days", viral_now)
+    render_cards("Rising / About-To-Go-Viral: 8–14 day signals", rising)
+    render_cards("Pattern Validation / Older or Unknown Date", validation)
 
     st.divider()
-    st.subheader("What Koocester Should Watch From These Matches")
+    st.subheader("Producer Takeaways")
     st.markdown(
         """
-- Prioritize links with real views, comments, and recent timestamps.
-- If most rows have `None` age or 0 metrics, the scraper is reaching Instagram but not receiving full analytics from the actor.
-- The best matches are ranked by recency, velocity, views, likes, and comments.
+- Use posts with high **Viral Probability** and strong **Retention Trigger** as your best filming references.
+- Prioritize multiple profiles, not just one creator, to avoid copying one account’s style.
+- For production, look for repeatable patterns: opening hook, camera angle, pacing, caption style, and emotional trigger.
+- If metrics are weak or missing, treat the post as a creative reference only, not a validated viral signal.
 """
     )
 
 
-# --------------------------------------------------
 # PAGE INTELLIGENCE + CONFIRMED INSTAGRAM LINKS
 # --------------------------------------------------
 PAGE_INTELLIGENCE = {
@@ -1949,9 +2154,9 @@ Higher risk:
 # --------------------------------------------------
 # UI
 # --------------------------------------------------
-st.title("Koocester Viral Content Generator")
+st.title("Koocester Producer Intelligence Engine")
 st.caption(
-    "Latest viral content ideas based on page niche, country, connected analytics, and optional latest public trend feed."
+    "Live Instagram viral scanning by Koocester page, market, niche sources, and producer usefulness."
 )
 
 session_id = get_session_id()
@@ -2308,6 +2513,4 @@ if is_admin():
 
 st.divider()
 st.caption("Koocester Producer Intelligence Engine")
-
-
 
