@@ -964,7 +964,9 @@ def calculate_post_relevance(item: Dict[str, Any], page_data: Dict[str, Any]) ->
     # Account source helps, but should never be enough by itself.
     account = str(item.get("account") or "").lower().lstrip("@")
     if account in [p.lower().lstrip("@") for p in get_tracked_pages_for_page(page_data)]:
-        score += 8
+        # Being from a carefully selected tracked profile should help more,
+        # but it still should not be the only reason a post is accepted.
+        score += 18
 
     # Public performance signals add confidence, but relevance remains the gatekeeper.
     if safe_int(item.get("views")) >= 50_000:
@@ -1085,25 +1087,33 @@ def final_fit_score(item: Dict[str, Any], page_data: Dict[str, Any]) -> Tuple[in
 
 
 def should_keep_post(item: Dict[str, Any], page_data: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+    """Decide whether a scraped Instagram post should be shown.
+
+    This version is intentionally softer than the old one. Instagram captions are often
+    short, messy, or visual-first, so requiring 3 exact niche keyword matches rejects
+    too many usable posts.
+    """
     final_score, debug = final_fit_score(item, page_data)
-    rules = get_intent_rules(page_data)
-    minimum = int(rules.get("minimum", 2))
     matched_count = len(debug.get("matched_terms", []))
     bad_count = len(debug.get("negative_terms", []))
+    relevance_score = debug.get("relevance_score", 0)
+    producer_score = debug.get("producer_score", 0)
+    viral_score = debug.get("viral_score", 0)
 
-    if bad_count >= 2 and matched_count < minimum + 1:
-        return False, "Rejected: negative lifestyle/off-niche signals outweighed niche intent.", debug
+    # Only reject immediately when it is clearly off-niche and has no positive signal.
+    if bad_count >= 2 and matched_count == 0:
+        return False, "Rejected: clearly off-niche lifestyle signals with no niche match.", debug
 
-    if matched_count < minimum:
-        return False, "Rejected: post is from a tracked account but the actual caption/post intent is not specific enough for this Koocester niche.", debug
+    # If there are no matched terms, still allow strong posts from tracked sources
+    # when performance/producer value is decent.
+    if matched_count == 0 and relevance_score < 12 and final_score < 35 and producer_score < 50 and viral_score < 55:
+        return False, "Rejected: too little niche relevance or usable viral/producer signal.", debug
 
-    if debug.get("relevance_score", 0) < 28:
-        return False, "Rejected: low post-level relevance score.", debug
-
-    if final_score < 42:
+    # Lower combined threshold so the scan does not become empty too easily.
+    if final_score < 30:
         return False, "Rejected: weak combined viral/relevance/producer-value score.", debug
 
-    return True, "Accepted: post has enough niche relevance and producer value.", debug
+    return True, "Accepted: enough niche relevance, viral signal, or producer value.", debug
 
 
 def enrich_scanned_item(item: Dict[str, Any], page_data: Dict[str, Any]) -> Dict[str, Any]:
