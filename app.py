@@ -58,10 +58,11 @@ TREND_FEED_JSON = "[]"
 # Optional Apify Instagram trend scanner.
 APIFY_API_TOKEN = ""
 APIFY_INSTAGRAM_ACTOR = "apify/instagram-scraper"
-APIFY_RESULTS_LIMIT = "15"
+APIFY_RESULTS_LIMIT = "40"
 APIFY_INPUT_FIELD = "directUrls"
-APIFY_MAX_PROFILES = "6"
-APIFY_MAX_HASHTAGS = "3"
+APIFY_MAX_PROFILES = "8"
+APIFY_MAX_HASHTAGS = "4"
+APIFY_RESULTS_TYPE = "posts"
 """
 
 
@@ -734,7 +735,7 @@ def fetch_apify_instagram_trends(page_data: Dict[str, Any], platform: str, limit
 
         return {
             "connected": True,
-            "status": f"Live Apify Instagram scraper connected. Found {len(normalized)} usable reel/post items from {len(urls)} niche sources for {page_data.get('market')} / {page_data.get('internal_key')}.",
+            "status": f"Live Apify Instagram scraper connected. Found {len(normalized)} raw usable reel/post items from {len(urls)} sources for {page_data.get('market')} / {page_data.get('internal_key')}. Post-level Koocester relevance filtering is applied before results are shown.",
             "items": normalized[:results_limit],
             "raw_count": len(raw_items),
             "usable_count": len(normalized),
@@ -798,15 +799,29 @@ def summarize_latest_trends_for_prompt(trend_data: Dict[str, Any]) -> str:
 
 
 # --------------------------------------------------
-# REAL VIRAL INSTAGRAM SCAN OUTPUT — PRODUCER VERSION
+# REAL VIRAL INSTAGRAM SCAN OUTPUT — POST-LEVEL PRODUCER VERSION
 # --------------------------------------------------
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        if value is None or value == "":
+            return default
+        return int(float(value))
+    except Exception:
+        return default
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        return float(value)
+    except Exception:
+        return default
+
+
 def format_number(value: Any) -> str:
     """Format large metrics into producer-friendly labels."""
-    try:
-        value = int(value or 0)
-    except Exception:
-        return "0"
-
+    value = safe_int(value)
     if value >= 1_000_000:
         return f"{value / 1_000_000:.1f}M"
     if value >= 1_000:
@@ -830,22 +845,174 @@ def format_posted_recency(age_days: Any) -> str:
     return f"Posted {age_days} days ago"
 
 
-def virality_probability(item: Dict[str, Any]) -> Tuple[int, str]:
-    """Estimate breakout potential from public metrics returned by scraper.
+POST_INTENT_RULES = {
+    "autos": {
+        "strong": [
+            "buy", "buying", "buyer", "buyers", "own", "owner", "ownership", "drive", "driving",
+            "test drive", "viewing", "price", "cost", "worth", "review", "comparison", "compare",
+            "spec", "specs", "interior", "engine", "horsepower", "luxury car", "supercar", "sedan",
+            "suv", "porsche", "mercedes", "bmw", "audi", "ferrari", "lamborghini", "brabus",
+            "mclaren", "tesla", "daily driver", "delivery", "car collection", "showroom",
+        ],
+        "producer": [
+            "pov", "first drive", "delivery day", "walkaround", "interior tour", "exterior", "sound",
+            "startup", "0-100", "ownership experience", "dream car", "finance", "installment",
+        ],
+        "bad": [
+            "hotel", "resort", "beach", "outfit", "makeup", "food", "party", "vacation", "monaco for a very special", "airport lounge"],
+        "minimum": 3,
+    },
+    "autos_my": {
+        "strong": [
+            "buy", "buying", "buyer", "buyers", "own", "owner", "ownership", "drive", "driving",
+            "test drive", "viewing", "price", "cost", "worth", "review", "comparison", "compare",
+            "spec", "specs", "interior", "engine", "horsepower", "luxury car", "supercar", "sedan",
+            "suv", "porsche", "mercedes", "bmw", "audi", "ferrari", "lamborghini", "brabus",
+            "mclaren", "tesla", "daily driver", "delivery", "car collection", "showroom", "kereta",
+        ],
+        "producer": [
+            "pov", "first drive", "delivery day", "walkaround", "interior tour", "exterior", "sound",
+            "startup", "0-100", "ownership experience", "dream car", "finance", "installment",
+        ],
+        "bad": ["hotel", "resort", "beach", "outfit", "makeup", "food", "party", "vacation", "airport lounge"],
+        "minimum": 3,
+    },
+    "homes": {
+        "strong": [
+            "home", "house", "condo", "property", "renovation", "reno", "interior", "layout", "space",
+            "before", "after", "kitchen", "living room", "bedroom", "bathroom", "landed", "hdb",
+            "bto", "apartment", "tour", "walkthrough", "design", "renovate", "homeowner", "buyer",
+        ],
+        "producer": ["home tour", "before and after", "layout mistake", "storage", "small space", "budget", "transformation"],
+        "bad": ["car", "supercar", "makeup", "party", "food review", "hotel vacation"],
+        "minimum": 3,
+    },
+    "homes_my": {
+        "strong": [
+            "home", "house", "condo", "property", "renovation", "reno", "interior", "layout", "space",
+            "before", "after", "kitchen", "living room", "bedroom", "bathroom", "landed", "apartment",
+            "tour", "walkthrough", "design", "renovate", "homeowner", "buyer", "rumah", "kl property",
+        ],
+        "producer": ["home tour", "before and after", "layout mistake", "storage", "small space", "budget", "transformation"],
+        "bad": ["car", "supercar", "makeup", "party", "food review", "hotel vacation"],
+        "minimum": 3,
+    },
+    "business": {
+        "strong": [
+            "founder", "business", "entrepreneur", "startup", "owner", "ceo", "sales", "growth", "networking",
+            "client", "customers", "profit", "revenue", "marketing", "lead", "strategy", "operator", "SME".lower(),
+            "event", "conference", "investor", "pitch", "team", "hiring", "brand",
+        ],
+        "producer": ["founder lesson", "hard truth", "business mistake", "networking", "operator", "case study", "growth lesson"],
+        "bad": ["makeup", "food", "beach", "hotel", "car review", "home tour"],
+        "minimum": 3,
+    },
+    "business_my": {
+        "strong": [
+            "founder", "business", "entrepreneur", "startup", "owner", "ceo", "sales", "growth", "networking",
+            "client", "customers", "profit", "revenue", "marketing", "lead", "strategy", "operator", "sme",
+            "event", "conference", "investor", "pitch", "team", "hiring", "brand", "usahawan",
+        ],
+        "producer": ["founder lesson", "hard truth", "business mistake", "networking", "operator", "case study", "growth lesson"],
+        "bad": ["makeup", "food", "beach", "hotel", "car review", "home tour"],
+        "minimum": 3,
+    },
+    "main": {
+        "strong": ["premium", "event", "founder", "community", "lifestyle", "experience", "network", "luxury", "social", "brand", "story"],
+        "producer": ["social proof", "premium event", "community", "story", "moment", "behind the scenes"],
+        "bad": ["random meme", "gaming", "politics"],
+        "minimum": 2,
+    },
+}
 
-    This is not a guaranteed prediction. It is a practical producer score based on
-    views, engagement, discussion, and recency.
+
+def get_intent_rules(page_data: Dict[str, Any]) -> Dict[str, Any]:
+    key = page_data.get("internal_key", "main")
+    return POST_INTENT_RULES.get(key, POST_INTENT_RULES["main"])
+
+
+def calculate_post_relevance(item: Dict[str, Any], page_data: Dict[str, Any]) -> Tuple[int, List[str], List[str]]:
+    """Score the actual post, not just the account.
+
+    This prevents random posts from car/luxury accounts from being treated as useful Koocester references.
     """
-    views = int(item.get("views") or 0)
-    likes = int(item.get("likes") or 0)
-    comments = int(item.get("comments") or 0)
-    shares = int(item.get("shares") or 0)
-    saves = int(item.get("saves") or 0)
+    rules = get_intent_rules(page_data)
+    text = " ".join(
+        str(item.get(k) or "")
+        for k in ["caption", "title", "account", "url", "shortcode"]
+    ).lower()
+
+    matched: List[str] = []
+    bad_hits: List[str] = []
+    score = 0
+
+    for word in rules.get("strong", []):
+        if word and word.lower() in text:
+            matched.append(word)
+            score += 12
+
+    for word in rules.get("producer", []):
+        if word and word.lower() in text:
+            matched.append(word)
+            score += 18
+
+    for word in rules.get("bad", []):
+        if word and word.lower() in text:
+            bad_hits.append(word)
+            score -= 20
+
+    # Account source helps, but should never be enough by itself.
+    account = str(item.get("account") or "").lower().lstrip("@")
+    if account in [p.lower().lstrip("@") for p in get_tracked_pages_for_page(page_data)]:
+        score += 8
+
+    # Public performance signals add confidence, but relevance remains the gatekeeper.
+    if safe_int(item.get("views")) >= 50_000:
+        score += 8
+    if safe_int(item.get("comments")) >= 100:
+        score += 6
+    if item.get("age_days") is not None and safe_int(item.get("age_days")) <= 7:
+        score += 6
+
+    return max(0, min(score, 100)), sorted(set(matched)), sorted(set(bad_hits))
+
+
+def producer_value_score(item: Dict[str, Any], page_data: Dict[str, Any]) -> int:
+    score = 35
+    retention = retention_trigger(item, page_data).lower()
+    hook = hook_strength(item).lower()
+    caption = (item.get("caption") or item.get("title") or "").lower()
+
+    if "strong" in hook:
+        score += 20
+    elif "decent" in hook:
+        score += 10
+
+    if any(term in retention for term in ["tension", "curiosity", "cost", "decision"]):
+        score += 15
+
+    if any(word in caption for word in ["before", "after", "pov", "mistake", "worth", "why", "how", "tour", "review"]):
+        score += 15
+
+    if safe_int(item.get("comments")) >= 50:
+        score += 8
+    if safe_int(item.get("likes")) >= 1000:
+        score += 7
+
+    return max(0, min(score, 100))
+
+
+def virality_probability(item: Dict[str, Any]) -> Tuple[int, str]:
+    """Estimate breakout potential from public metrics returned by scraper."""
+    views = safe_int(item.get("views"))
+    likes = safe_int(item.get("likes"))
+    comments = safe_int(item.get("comments"))
+    shares = safe_int(item.get("shares"))
+    saves = safe_int(item.get("saves"))
     age_days = item.get("age_days")
 
-    score = 30
+    score = 25
 
-    # Reach / validation signal
     if views >= 1_000_000:
         score += 30
     elif views >= 500_000:
@@ -857,7 +1024,6 @@ def virality_probability(item: Dict[str, Any]) -> Tuple[int, str]:
     elif views >= 10_000:
         score += 5
 
-    # Like signal
     if likes >= 25_000:
         score += 18
     elif likes >= 10_000:
@@ -867,7 +1033,6 @@ def virality_probability(item: Dict[str, Any]) -> Tuple[int, str]:
     elif likes >= 1_000:
         score += 5
 
-    # Comment/discussion signal
     if comments >= 1_000:
         score += 14
     elif comments >= 500:
@@ -877,21 +1042,16 @@ def virality_probability(item: Dict[str, Any]) -> Tuple[int, str]:
     elif comments >= 30:
         score += 4
 
-    # Share/save signal if available
     score += min(10, (shares // 100) + (saves // 100))
 
-    # Recency/velocity signal
     if age_days is not None:
-        try:
-            age_days_int = int(age_days)
-            if age_days_int <= 3:
-                score += 12
-            elif age_days_int <= 7:
-                score += 8
-            elif age_days_int <= 14:
-                score += 4
-        except Exception:
-            pass
+        age_days_int = safe_int(age_days, 999)
+        if age_days_int <= 3:
+            score += 12
+        elif age_days_int <= 7:
+            score += 8
+        elif age_days_int <= 14:
+            score += 4
 
     score = max(0, min(score, 95))
 
@@ -907,17 +1067,73 @@ def virality_probability(item: Dict[str, Any]) -> Tuple[int, str]:
     return score, label
 
 
+def final_fit_score(item: Dict[str, Any], page_data: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    viral_score, viral_label = virality_probability(item)
+    relevance_score, matched, bad_hits = calculate_post_relevance(item, page_data)
+    producer_score = producer_value_score(item, page_data)
+
+    final_score = round((viral_score * 0.40) + (relevance_score * 0.42) + (producer_score * 0.18))
+    debug = {
+        "viral_score": viral_score,
+        "viral_label": viral_label,
+        "relevance_score": relevance_score,
+        "producer_score": producer_score,
+        "matched_terms": matched,
+        "negative_terms": bad_hits,
+    }
+    return max(0, min(final_score, 100)), debug
+
+
+def should_keep_post(item: Dict[str, Any], page_data: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
+    final_score, debug = final_fit_score(item, page_data)
+    rules = get_intent_rules(page_data)
+    minimum = int(rules.get("minimum", 2))
+    matched_count = len(debug.get("matched_terms", []))
+    bad_count = len(debug.get("negative_terms", []))
+
+    if bad_count >= 2 and matched_count < minimum + 1:
+        return False, "Rejected: negative lifestyle/off-niche signals outweighed niche intent.", debug
+
+    if matched_count < minimum:
+        return False, "Rejected: post is from a tracked account but the actual caption/post intent is not specific enough for this Koocester niche.", debug
+
+    if debug.get("relevance_score", 0) < 28:
+        return False, "Rejected: low post-level relevance score.", debug
+
+    if final_score < 42:
+        return False, "Rejected: weak combined viral/relevance/producer-value score.", debug
+
+    return True, "Accepted: post has enough niche relevance and producer value.", debug
+
+
+def enrich_scanned_item(item: Dict[str, Any], page_data: Dict[str, Any]) -> Dict[str, Any]:
+    keep, decision_reason, debug = should_keep_post(item, page_data)
+    final_score, _ = final_fit_score(item, page_data)
+    enriched = dict(item)
+    enriched.update(
+        {
+            "koocester_keep": keep,
+            "koocester_decision_reason": decision_reason,
+            "koocester_final_score": final_score,
+            "koocester_relevance_score": debug.get("relevance_score", 0),
+            "producer_value_score": debug.get("producer_score", 0),
+            "matched_terms": debug.get("matched_terms", []),
+            "negative_terms": debug.get("negative_terms", []),
+            "viral_score": debug.get("viral_score", 0),
+            "viral_label": debug.get("viral_label", ""),
+        }
+    )
+    return enriched
+
+
 def hook_strength(item: Dict[str, Any]) -> str:
     caption = (item.get("caption") or item.get("title") or "").lower()
-
     strong_words = [
-        "mistake", "regret", "truth", "secret", "hidden", "before", "why",
-        "nobody", "stop", "avoid", "cost", "expensive", "worth", "cheap",
-        "luxury", "owner", "founder", "renovation", "property", "business",
-        "million", "rich", "poor", "best", "worst", "problem", "solution",
+        "mistake", "regret", "truth", "secret", "hidden", "before", "why", "nobody",
+        "stop", "avoid", "cost", "expensive", "worth", "cheap", "owner", "founder",
+        "renovation", "property", "business", "million", "best", "worst", "problem", "solution",
     ]
     hits = sum(1 for word in strong_words if word in caption)
-
     if hits >= 3:
         return "Strong hook"
     if hits >= 1:
@@ -933,40 +1149,60 @@ def retention_trigger(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
         return "Mistake/regret tension"
     if any(word in caption for word in ["secret", "hidden", "nobody", "truth"]):
         return "Curiosity gap"
-    if any(word in caption for word in ["worth", "cheap", "expensive", "cost"]):
+    if any(word in caption for word in ["worth", "cheap", "expensive", "cost", "price"]):
         return "Value/cost tension"
     if niche in ["homes", "homes_my"]:
-        return "Visual transformation / homeowner decision tension"
+        return "Homeowner decision / transformation tension"
     if niche in ["autos", "autos_my"]:
-        return "Ownership desire / status tension"
+        return "Buyer decision / ownership desire tension"
     if niche in ["business", "business_my"]:
         return "Founder lesson / business opinion tension"
     return "Lifestyle discovery / social proof"
 
 
+def content_type_label(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
+    caption = (item.get("caption") or item.get("title") or "").lower()
+    niche = page_data.get("internal_key", "")
+
+    if any(w in caption for w in ["mistake", "regret", "avoid", "before"]):
+        return "Decision-risk content"
+    if any(w in caption for w in ["pov", "drive", "ownership", "owner"]):
+        return "Ownership/POV content"
+    if any(w in caption for w in ["tour", "walkthrough", "before", "after"]):
+        return "Tour/transformation content"
+    if any(w in caption for w in ["founder", "business", "lesson", "growth"]):
+        return "Founder/business lesson"
+    if niche in ["autos", "autos_my"]:
+        return "Auto buyer-interest content"
+    if niche in ["homes", "homes_my"]:
+        return "Home/property-interest content"
+    if niche in ["business", "business_my"]:
+        return "Business operator-interest content"
+    return "Premium discovery content"
+
+
 def producer_insight(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
     niche = page_data.get("internal_key", "")
-    views = int(item.get("views") or 0)
-    comments = int(item.get("comments") or 0)
     probability_score, probability_label = virality_probability(item)
+    matched = item.get("matched_terms") or calculate_post_relevance(item, page_data)[1]
 
     if niche in ["homes", "homes_my"]:
-        base = "Producer value: study the opening visual, walkthrough pacing, homeowner problem, and reveal/payoff timing. This can guide what angles and decisions to capture on shoot day."
+        base = "Producer value: use this to study the opening room shot, walkthrough pacing, homeowner problem, and reveal/payoff timing."
     elif niche in ["autos", "autos_my"]:
-        base = "Producer value: study how the reel creates ownership desire, status tension, car detail shots, and buyer curiosity. This can guide B-roll priorities and narration."
+        base = "Producer value: use this to study buyer curiosity, ownership desire, car-detail sequencing, POV shots, and narration angle."
     elif niche in ["business", "business_my"]:
-        base = "Producer value: study the first opinion/lesson, founder credibility, room energy, and comment-triggering angle. This can guide interview questions and event coverage."
+        base = "Producer value: use this to study the first opinion/lesson, founder credibility, room energy, and comment-triggering angle."
     else:
-        base = "Producer value: study the first 2 seconds, social proof, people/scene selection, and premium perception. This can guide what moments are actually worth filming."
+        base = "Producer value: use this to study the first 2 seconds, social proof, scene selection, and premium perception."
 
-    if views >= 100_000:
-        base += " Strong validation: view count shows this format has already moved beyond normal reach."
-    elif comments >= 100:
-        base += " Discussion signal: comments suggest the topic creates reaction, which is useful for engagement-led content."
-    elif probability_score >= 65:
-        base += f" Rising signal: {probability_label.lower()} based on available metrics."
+    if matched:
+        base += f" Matching signals: {', '.join(matched[:6])}."
+    if safe_int(item.get("views")) >= 100_000:
+        base += " Strong validation: the reach suggests this format has moved beyond normal niche reach."
+    elif safe_int(item.get("comments")) >= 100:
+        base += " Discussion signal: comments suggest the topic creates reaction, useful for engagement-led content."
     else:
-        base += " Use as creative reference only unless more metrics validate it."
+        base += f" Treat as a {probability_label.lower()} reference unless stronger metrics appear."
 
     return base
 
@@ -974,17 +1210,18 @@ def producer_insight(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
 def koocester_fit_reason(item: Dict[str, Any], page_data: Dict[str, Any]) -> str:
     market = page_data.get("market", "")
     niche = page_data.get("internal_key", "")
+    relevance = item.get("koocester_relevance_score", calculate_post_relevance(item, page_data)[0])
 
     if niche in ["autos", "autos_my"]:
-        return f"Fits Koocester Autos because it matches premium car interest, ownership desire, or buyer decision content for {market}."
+        return f"Fits Koocester Autos only if it supports car buyer psychology, ownership desire, viewing intent, or premium car decision content for {market}. Relevance score: {relevance}/100."
     if niche in ["homes", "homes_my"]:
-        return f"Fits Koocester Homes because it matches renovation, property, home tour, layout, or homeowner decision content for {market}."
+        return f"Fits Koocester Homes only if it supports renovation, property, layout, homeowner pain, or save-worthy home decision content for {market}. Relevance score: {relevance}/100."
     if niche in ["business", "business_my"]:
-        return f"Fits Koocester Business because it matches founder, SME, networking, operator, or business-growth content for {market}."
-    return f"Fits Koocester Main because it matches premium lifestyle, event, founder, discovery, or social-proof content for {market}."
+        return f"Fits Koocester Business only if it supports founder, SME, networking, operator, or business-growth content for {market}. Relevance score: {relevance}/100."
+    return f"Fits Koocester Main only if it supports premium lifestyle, event, founder, discovery, or social-proof content for {market}. Relevance score: {relevance}/100."
 
 
-def diversify_by_profile(items: List[Dict[str, Any]], max_per_profile: int = 3) -> List[Dict[str, Any]]:
+def diversify_by_profile(items: List[Dict[str, Any]], max_per_profile: int = 2) -> List[Dict[str, Any]]:
     """Prevent one Instagram profile from dominating the scan result."""
     profile_counts: Dict[str, int] = {}
     diversified: List[Dict[str, Any]] = []
@@ -992,11 +1229,9 @@ def diversify_by_profile(items: List[Dict[str, Any]], max_per_profile: int = 3) 
     for item in items:
         account = str(item.get("account") or "unknown").lower()
         current_count = profile_counts.get(account, 0)
-
         if current_count < max_per_profile:
             diversified.append(item)
             profile_counts[account] = current_count + 1
-
     return diversified
 
 
@@ -1015,23 +1250,50 @@ def render_source_health(items: List[Dict[str, Any]]) -> None:
         st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
+def render_rejected_posts(rejected_items: List[Dict[str, Any]]) -> None:
+    if not rejected_items:
+        return
+    with st.expander("Rejected off-niche posts", expanded=False):
+        st.write("These were scraped but removed because the actual post did not match Koocester's selected niche strongly enough.")
+        rows = []
+        for item in rejected_items[:30]:
+            caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
+            if len(caption) > 120:
+                caption = caption[:120] + "..."
+            rows.append(
+                {
+                    "Profile": "@" + str(item.get("account") or "unknown"),
+                    "Reason": item.get("koocester_decision_reason", "Rejected"),
+                    "Relevance": item.get("koocester_relevance_score", 0),
+                    "Negative Terms": ", ".join(item.get("negative_terms", [])),
+                    "Caption": caption,
+                    "Link": item.get("url") or item.get("permalink") or "",
+                }
+            )
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data: Dict[str, Any]) -> None:
     st.divider()
     st.title("Koocester Live Viral Intelligence Scan")
-    st.caption("Real scraped Instagram links ranked for producer usefulness. No fake viral assumptions.")
+    st.caption("Post-level matching: every result must match the selected Koocester page niche, not just come from a related account.")
 
-    items = trend_data.get("items", []) or []
+    raw_items = trend_data.get("items", []) or []
     tracked_pages = trend_data.get("tracked_pages", []) or get_tracked_pages_for_page(page_data)
     tracked_hashtags = trend_data.get("tracked_hashtags", []) or get_tracked_hashtags_for_page(page_data)
 
+    enriched_items = [enrich_scanned_item(item, page_data) for item in raw_items]
+    accepted_items = [item for item in enriched_items if item.get("koocester_keep")]
+    rejected_items = [item for item in enriched_items if not item.get("koocester_keep")]
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Scanner Status", "Connected" if trend_data.get("connected") else "Not connected")
-    c2.metric("Usable Posts", len(items))
-    c3.metric("Raw Rows", trend_data.get("raw_count", len(items)))
+    c2.metric("Accepted Posts", len(accepted_items))
+    c3.metric("Rejected Off-Niche", len(rejected_items))
     c4.metric("Market", page_data.get("market", "-"))
     c5.metric("Page Niche", page_data.get("internal_key", "-"))
 
-    if trend_data.get("connected") and items:
+    if trend_data.get("connected") and raw_items:
         st.success(trend_data.get("status", "Scanner connected."))
     else:
         st.warning(trend_data.get("status", "Scanner not connected."))
@@ -1045,15 +1307,21 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
             st.write("**Actual URLs sent to Apify:**")
             st.code("\n".join(trend_data.get("scrape_urls", [])), language="text")
 
-    if not trend_data.get("connected") or not items:
+    render_rejected_posts(rejected_items)
+
+    if not trend_data.get("connected") or not raw_items:
         st.error("No usable Instagram posts were returned. Check Apify token, actor, input field, and source profiles.")
-        st.info("Recommended secrets: APIFY_INSTAGRAM_ACTOR='apify/instagram-scraper', APIFY_INPUT_FIELD='directUrls', APIFY_RESULTS_LIMIT='15', APIFY_MAX_PROFILES='6'.")
+        st.info("Recommended secrets: APIFY_INSTAGRAM_ACTOR='apify/instagram-scraper', APIFY_INPUT_FIELD='directUrls', APIFY_RESULTS_LIMIT='40', APIFY_MAX_PROFILES='8'.")
         st.stop()
 
-    # Rank by recency, velocity, views, likes, and comments.
+    if not accepted_items:
+        st.error("The scraper returned posts, but all were rejected as off-niche or weak-fit. Add better niche profiles or loosen the relevance rules slightly.")
+        st.stop()
+
     ranked_items = sorted(
-        items,
+        accepted_items,
         key=lambda x: (
+            -(x.get("koocester_final_score") or 0),
             x.get("recency_bucket") != "viral_now_candidate",
             -(x.get("velocity_score") or 0),
             -(x.get("views") or 0),
@@ -1062,37 +1330,34 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
         ),
     )
 
-    # Avoid showing only one profile.
-    diversified_items = diversify_by_profile(ranked_items, max_per_profile=3)
+    diversified_items = diversify_by_profile(ranked_items, max_per_profile=2)
 
-    total_views = sum(int(i.get("views") or 0) for i in diversified_items)
-    total_likes = sum(int(i.get("likes") or 0) for i in diversified_items)
-    total_comments = sum(int(i.get("comments") or 0) for i in diversified_items)
-    avg_engagement = round(
-        sum(float(i.get("engagement_rate") or 0) for i in diversified_items) / max(len(diversified_items), 1),
-        4,
-    )
+    total_views = sum(safe_int(i.get("views")) for i in diversified_items)
+    total_likes = sum(safe_int(i.get("likes")) for i in diversified_items)
+    total_comments = sum(safe_int(i.get("comments")) for i in diversified_items)
+    avg_relevance = round(sum(safe_float(i.get("koocester_relevance_score")) for i in diversified_items) / max(len(diversified_items), 1), 1)
 
     a1, a2, a3, a4 = st.columns(4)
     a1.metric("Total Views Scanned", format_number(total_views))
     a2.metric("Total Likes", format_number(total_likes))
     a3.metric("Total Comments", format_number(total_comments))
-    a4.metric("Avg Engagement Rate", avg_engagement)
+    a4.metric("Avg Koocester Relevance", f"{avg_relevance}/100")
 
     st.subheader("Executive Scan Summary")
     st.markdown(
         f"""
 **Selected page:** {page_name}  
 **Market:** {page_data.get("market")}  
-**Producer objective:** Find real posts/reels that already show traction or early breakout signals across multiple niche profiles.  
-**Diversity rule:** Maximum 3 posts per profile, so one account cannot dominate the scan.
+**Producer objective:** Find real posts/reels that match Koocester's actual niche and show viral or rising signals.  
+**Post-level rule:** A reel must match the content intent, not just come from a related profile.  
+**Diversity rule:** Maximum 2 posts per profile, so one account cannot dominate the scan.
 """
     )
 
     render_source_health(diversified_items)
 
     table_rows = []
-    for item in diversified_items[:30]:
+    for item in diversified_items[:40]:
         caption = (item.get("caption") or item.get("title") or "").replace("\n", " ").strip()
         if len(caption) > 140:
             caption = caption[:140] + "..."
@@ -1103,20 +1368,22 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
             {
                 "Profile": "@" + str(item.get("account") or "unknown"),
                 "Posted": format_posted_recency(item.get("age_days")),
-                "Views": int(item.get("views") or 0),
-                "Likes": int(item.get("likes") or 0),
-                "Comments": int(item.get("comments") or 0),
-                "Engagement Rate": item.get("engagement_rate", 0),
-                "Velocity Score": item.get("velocity_score", 0),
+                "Views": safe_int(item.get("views")),
+                "Likes": safe_int(item.get("likes")),
+                "Comments": safe_int(item.get("comments")),
+                "Koocester Fit": item.get("koocester_final_score", 0),
+                "Relevance": item.get("koocester_relevance_score", 0),
+                "Producer Value": item.get("producer_value_score", 0),
                 "Viral Probability": f"{probability_score}% - {probability_label}",
-                "Hook Strength": hook_strength(item),
+                "Content Type": content_type_label(item, page_data),
                 "Retention Trigger": retention_trigger(item, page_data),
+                "Matched Signals": ", ".join(item.get("matched_terms", [])[:5]),
                 "Caption / Topic": caption,
                 "Link": item.get("url") or item.get("permalink") or "",
             }
         )
 
-    st.subheader("Ranked Viral / Rising Content Matches")
+    st.subheader("Ranked Koocester-Fit Viral / Rising Matches")
     st.dataframe(table_rows, use_container_width=True, hide_index=True)
 
     viral_now = [i for i in diversified_items if i.get("recency_bucket") == "viral_now_candidate"]
@@ -1130,7 +1397,7 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
         st.markdown(f"### {title}")
 
         if not data:
-            st.info("No matching posts in this section.")
+            st.info("No accepted posts in this section.")
             return
 
         for index, item in enumerate(data[:12], start=1):
@@ -1143,39 +1410,43 @@ def render_real_viral_scan(trend_data: Dict[str, Any], page_name: str, page_data
             probability_score, probability_label = virality_probability(item)
 
             with st.container(border=True):
-                top = st.columns([2.2, 1, 1, 1])
+                top = st.columns([2.2, 1, 1, 1, 1])
                 top[0].markdown(f"**{index}. @{account}**")
                 top[1].metric("Views", format_number(item.get("views")))
                 top[2].metric("Likes", format_number(item.get("likes")))
                 top[3].metric("Comments", format_number(item.get("comments")))
+                top[4].metric("Fit", f"{item.get('koocester_final_score', 0)}/100")
 
                 st.write(caption if caption else "No caption returned by scraper.")
 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.write(f"**Posted:** {format_posted_recency(item.get('age_days'))}")
                 m2.write(f"**Viral Probability:** {probability_score}%")
-                m3.write(f"**Hook:** {hook_strength(item)}")
+                m3.write(f"**Relevance:** {item.get('koocester_relevance_score', 0)}/100")
                 m4.write(f"**Signal:** {probability_label}")
 
+                st.write(f"**Content Type:** {content_type_label(item, page_data)}")
                 st.write(f"**Retention Trigger:** {retention_trigger(item, page_data)}")
                 st.write(f"**Why this fits Koocester:** {koocester_fit_reason(item, page_data)}")
                 st.write(f"**Producer Insight:** {producer_insight(item, page_data)}")
+                if item.get("matched_terms"):
+                    st.caption("Matched post-level signals: " + ", ".join(item.get("matched_terms", [])[:8]))
 
                 if url:
                     st.link_button("Open Instagram Post/Reel", url)
 
-    render_cards("Viral Now: validated within 0–7 days", viral_now)
-    render_cards("Rising / About-To-Go-Viral: 8–14 day signals", rising)
+    render_cards("Viral Now: accepted 0–7 day Koocester-fit posts", viral_now)
+    render_cards("Rising / About-To-Go-Viral: accepted 8–14 day signals", rising)
     render_cards("Pattern Validation / Older or Unknown Date", validation)
 
     st.divider()
     st.subheader("Producer Takeaways")
     st.markdown(
         """
-- Use posts with high **Viral Probability** and strong **Retention Trigger** as your best filming references.
-- Prioritize multiple profiles, not just one creator, to avoid copying one account’s style.
-- For production, look for repeatable patterns: opening hook, camera angle, pacing, caption style, and emotional trigger.
-- If metrics are weak or missing, treat the post as a creative reference only, not a validated viral signal.
+- Do not copy a creator because one post performed well. Extract the pattern: opening hook, shot sequence, caption promise, and emotional trigger.
+- Prioritize posts with high **Koocester Fit**, not only likes.
+- Use rejected posts to see what the engine removed as off-niche, then improve tracked sources if needed.
+- For producers, the best references are specific, shootable, and tied to buyer/homeowner/founder decisions.
 """
     )
 
@@ -1388,24 +1659,61 @@ PAGE_INTELLIGENCE = {
 # --------------------------------------------------
 # TRACKED COMPETITOR / NICHE PAGE MAP
 # --------------------------------------------------
+# These are sources to scan, not automatic recommendations.
+# The post-level relevance filter below decides whether each actual post is useful for Koocester.
 TRACKED_COMPETITOR_PAGES = {
-    "homes_sg": ["stackedhomes", "propertylimbrothers", "thelocalinnterior", "sgproperty", "singaporeinterior"],
-    "homes_my": ["malaysiaproperty", "interior.my", "klproperty", "malaysiarenovation", "myhome"],
-    "business_sg": ["sgfounders", "startupsg", "businessinsider", "garyvee", "alexhormozi"],
-    "business_my": ["malaysiabusiness", "myfounders", "entrepreneurmy", "smemalaysia"],
-    "autos_sg": ["supercarsingapore", "sgcarmart", "luxurycarsg", "supercarblondie"],
-    "autos_my": ["malaysiaautos", "mycar", "supercarmy", "luxurycarsmy"],
+    "homes_sg": [
+        "stackedhomes", "propertylimbrothers", "thelocalinnterior", "qanvast", "renonation",
+        "sgproperty", "edgeprop.sg", "homeanddecor_sg", "lookboxliving", "singaporeinterior",
+    ],
+    "homes_my": [
+        "malaysiaproperty", "propertyguru_malaysia", "ipropertymalaysia", "interior.my",
+        "klproperty", "malaysiarenovation", "atap.co", "myhome", "renonation.my",
+    ],
+    "business_sg": [
+        "startupsg", "sgfounders", "thebusinessshowasia", "e27co", "techinasia",
+        "foundr", "entrepreneur", "alexhormozi", "garyvee", "businessinsider",
+    ],
+    "business_my": [
+        "malaysiabusiness", "myfounders", "entrepreneurmy", "smemalaysia", "digitalnewsasia",
+        "vulcanpost", "startupmalaysia", "foundr", "alexhormozi",
+    ],
+    "autos_sg": [
+        "sgcarmart", "motoristsg", "torqusingapore", "oneshift_sg", "carbuyersingapore",
+        "supercarsingapore", "luxurycarsg", "carwow", "topgear", "pistonheads",
+    ],
+    "autos_my": [
+        "paultan", "carlistmy", "wapcar.my", "autobuzz.my", "zigwheelsmy",
+        "malaysiaautos", "mycar", "supercarmy", "luxurycarsmy", "topgear",
+    ],
 }
 
 TRACKED_HASHTAGS = {
-    "homes_sg": ["singaporehomes", "singaporeproperty", "sginteriordesign", "sgrenovation", "singaporecondo"],
-    "homes_my": ["malaysiahomes", "malaysiaproperty", "myinteriordesign", "malaysiarenovation", "klproperty"],
-    "business_sg": ["sgbusiness", "singaporebusiness", "sgfounders", "startupsg", "entrepreneursg"],
-    "business_my": ["malaysiabusiness", "malaysiaentrepreneur", "smemalaysia", "startupmalaysia", "usahawanmalaysia"],
-    "autos_sg": ["sgcars", "singaporecars", "sgcarmart", "supercarsingapore", "luxurycarsg"],
-    "autos_my": ["malaysiacars", "keretamalaysia", "supercarmy", "luxurycarsmy", "automalaysia"],
+    "homes_sg": [
+        "singaporehomes", "singaporeproperty", "sginteriordesign", "sgrenovation",
+        "singaporecondo", "hdbrenovation", "singaporeinterior", "sgpropertymarket",
+    ],
+    "homes_my": [
+        "malaysiahomes", "malaysiaproperty", "myinteriordesign", "malaysiarenovation",
+        "klproperty", "rumahmalaysia", "malaysiainterior", "malaysiahomedecor",
+    ],
+    "business_sg": [
+        "sgbusiness", "singaporebusiness", "sgfounders", "startupsg", "entrepreneursg",
+        "smebusiness", "businessnetworking", "founderstory",
+    ],
+    "business_my": [
+        "malaysiabusiness", "malaysiaentrepreneur", "smemalaysia", "startupmalaysia",
+        "usahawanmalaysia", "bisnesmalaysia", "foundermalaysia",
+    ],
+    "autos_sg": [
+        "sgcars", "singaporecars", "sgcarmart", "supercarsingapore", "luxurycarsg",
+        "carreviewsg", "sgcarclub", "singaporecar",
+    ],
+    "autos_my": [
+        "malaysiacars", "keretamalaysia", "supercarmy", "luxurycarsmy", "automalaysia",
+        "carreviewmalaysia", "paultan", "malaysiacarclub",
+    ],
 }
-
 
 def get_niche_bucket_for_page(page_data: Dict[str, Any]) -> str:
     key = page_data.get("internal_key", "")
